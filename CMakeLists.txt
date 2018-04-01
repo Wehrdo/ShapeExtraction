@@ -2,10 +2,11 @@ cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(shapes LANGUAGES CXX CUDA)
 
 file(GLOB shapes_sources ./src/*.cpp ./src/*.cu ./src/*.hpp)
-list(REMOVE_ITEM shapes_sources "main.cpp")
+list(REMOVE_ITEM shapes_sources "main.cu")
 
 add_executable(shapes ${shapes_sources})
 target_include_directories(shapes PRIVATE libmorton)
+target_include_directories(shapes PRIVATE cub)
 
 # Request that shapes be built with -std=c++11
 # As this is a public compile feature anything that links to particles

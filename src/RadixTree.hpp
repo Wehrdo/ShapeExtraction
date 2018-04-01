@@ -1,4 +1,7 @@
 #include "PointCloud.hpp"
+#include <cuda_runtime_api.h>
+#include <cuda.h>
+#include "cub/util_allocator.cuh"
 
 #include <cstdint>
 #include <memory>
@@ -31,7 +34,7 @@ public:
     RadixTree(const PointCloud<float>& cloud);
     ~RadixTree();
 private:
-
+    cub::CachingDeviceAllocator g_allocator;
     std::unique_ptr<Node> h_tree;
     Node* d_tree;
 

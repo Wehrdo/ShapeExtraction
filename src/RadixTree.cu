@@ -1,5 +1,3 @@
-#include <cuda_runtime_api.h>
-#include <cuda.h>
 
 #include "RadixTree.hpp"
 #include "CudaCommon.cuh"
