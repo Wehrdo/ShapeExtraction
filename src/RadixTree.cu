@@ -25,13 +25,26 @@ __global__ void makeCodes(const T minCoord,
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
         T range = (maxCoord - minCoord);
-        uint32_t x_coord = 0xFFFFFFFF * (x_vals[idx] / range) + minCoord;
-        uint32_t y_coord = 0xFFFFFFFF * (y_vals[idx] / range) + minCoord;
-        uint32_t z_coord = 0xFFFFFFFF * (z_vals[idx] / range) + minCoord;
+        // uint32_t x_coord = 0xFFFFFFFF * (x_vals[idx] / range) + (minCoord / range);
+        // uint32_t y_coord = 0xFFFFFFFF * (y_vals[idx] / range) + (minCoord / range);
+        // uint32_t z_coord = 0xFFFFFFFF * (z_vals[idx] / range) + (minCoord / range);
+        const uint32_t bitmask = 0xFFFFFFFFu >> (32 - 21);
+        uint32_t x_coord = bitmask * ((x_vals[idx] - minCoord) / range);
+        uint32_t y_coord = bitmask * ((y_vals[idx] - minCoord) / range);
+        uint32_t z_coord = bitmask * ((z_vals[idx] - minCoord) / range);
         nodes[idx].mortonCode = morton3D_64_encode(x_coord, y_coord, z_coord);
-        if (idx == 0) {
-            printf("%f, %f, %f = %x\n", x_vals[idx], y_vals[idx], z_vals[idx], nodes[idx].mortonCode);
-        }
+        // if (idx == 0) {
+        //     // printf("min = %f, max = %f\n", minCoord, maxCoord);
+        //     printf("%u, %u, %u\n", x_coord, y_coord, z_coord);
+        //     printf("%f, %f, %f = %x\n", x_vals[idx], y_vals[idx], z_vals[idx], nodes[idx].mortonCode);
+
+        //     uint_fast32_t dec_raw_x, dec_raw_y, dec_raw_z;
+        //     morton3D_64_decode(nodes[idx].mortonCode, dec_raw_x, dec_raw_y, dec_raw_z);
+        //     float dec_x = ((float)dec_raw_x / bitmask) * range + minCoord;
+        //     float dec_y = ((float)dec_raw_y / bitmask) * range + minCoord;
+        //     float dec_z = ((float)dec_raw_z / bitmask) * range + minCoord;
+        //     printf("decoded = %f, %f, %f\n", dec_x, dec_y, dec_z);
+        // }
     }
 }
 
@@ -74,6 +87,8 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 
     cudaMemcpy(&mins[0], d_mins, sizeof(float) * mins.size(), cudaMemcpyDeviceToHost);
     cudaMemcpy(&maxes[0], d_maxes, sizeof(float) * maxes.size(), cudaMemcpyDeviceToHost);
+    g_allocator.DeviceFree(d_mins);
+    g_allocator.DeviceFree(d_maxes);
     cudaDeviceSynchronize();
     float max_val = *std::max_element(maxes.begin(), maxes.end());
     float min_val = *std::min_element(mins.begin(), mins.end());
