@@ -8,7 +8,7 @@
  * "Maximizing Parallelism in the Construction of BVHs, Octrees, and k-d Trees"
  */
 
-namespace RadixTree {
+namespace RT {
 class Node {
     // 63-bit morton code, packed to the right
     uint64_t mortonCode;
@@ -26,12 +26,12 @@ class Node {
     Node* rightChild;
 };
 
-template <typename T>
 class RadixTree {
 public:
-    RadixTree(const PointCloud<T>& cloud);
+    RadixTree(const PointCloud<float>& cloud);
     ~RadixTree();
 private:
+
     std::unique_ptr<Node> h_tree;
     Node* d_tree;
 
