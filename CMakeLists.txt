@@ -11,7 +11,7 @@ target_include_directories(shapes PRIVATE cub)
 # Request that shapes be built with -std=c++11
 # As this is a public compile feature anything that links to particles
 # will also build with -std=c++11
-target_compile_features(shapes PUBLIC cxx_std_11)
+target_compile_features(shapes PUBLIC cxx_std_14)
 
 set_target_properties(shapes PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

@@ -1,9 +1,14 @@
-
 #include "RadixTree.hpp"
 #include "CudaCommon.cuh"
 #include "libmorton/include/morton.h"
+#include "cub/device/device_reduce.cuh"
+
+#include <array>
+#include <algorithm>
+#include <limits>
 
 using namespace RT;
+using cub::DeviceReduce;
 
 template <typename T>
 __global__ void makeCodes(const T minCoord,
@@ -20,17 +25,64 @@ __global__ void makeCodes(const T minCoord,
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
         T range = (maxCoord - minCoord);
-        uint32_t x_coord = (x_vals[idx] / range) + minCoord;
-        uint32_t y_coord = (y_vals[idx] / range) + minCoord;
-        uint32_t z_coord = (z_vals[idx] / range) + minCoord;
+        uint32_t x_coord = 0xFFFFFFFF * (x_vals[idx] / range) + minCoord;
+        uint32_t y_coord = 0xFFFFFFFF * (y_vals[idx] / range) + minCoord;
+        uint32_t z_coord = 0xFFFFFFFF * (z_vals[idx] / range) + minCoord;
         nodes[idx].mortonCode = morton3D_64_encode(x_coord, y_coord, z_coord);
+        if (idx == 0) {
+            printf("%f, %f, %f = %x\n", x_vals[idx], y_vals[idx], z_vals[idx], nodes[idx].mortonCode);
+        }
     }
 }
 
 RadixTree::RadixTree(const PointCloud<float>& cloud) {
-    size_t tree_size = cloud.x_vals.size() * sizeof(Node);
-    std::cout << "allocating " << tree_size << " bytes" << std::endl;
+    size_t n_pts = cloud.x_vals.size();
+    // Allocate for tree
+    size_t tree_size = n_pts * sizeof(Node);
     CudaCheckCall(cudaMalloc(&d_tree, tree_size));
+    // Allocate for raw data points
+    size_t data_size = n_pts * sizeof(cloud.x_vals[0]);
+    CudaCheckCall(cudaMalloc(&d_data_x, data_size));
+    CudaCheckCall(cudaMalloc(&d_data_y, data_size));
+    CudaCheckCall(cudaMalloc(&d_data_z, data_size));
+    // Copy points to GPU
+    CudaCheckCall(cudaMemcpyAsync(d_data_x, &cloud.x_vals[0], data_size, cudaMemcpyHostToDevice));
+    CudaCheckCall(cudaMemcpyAsync(d_data_y, &cloud.y_vals[0], data_size, cudaMemcpyHostToDevice));
+    CudaCheckCall(cudaMemcpyAsync(d_data_z, &cloud.z_vals[0], data_size, cudaMemcpyHostToDevice));
+    cudaDeviceSynchronize();
+
+    // Find maximum and minumum values in data
+    std::array<float, 3> mins, maxes;
+    float *d_mins, *d_maxes;
+    g_allocator.DeviceAllocate((void**)&d_mins, sizeof(float) * 3);
+    g_allocator.DeviceAllocate((void**)&d_maxes, sizeof(float) * 3);
+
+    size_t temp_storage_reqd = 0;
+    void* temp_storage = nullptr;
+    // get amount of required memory
+    cub::DeviceReduce::Max(temp_storage, temp_storage_reqd, d_data_x, &maxes[0], n_pts);
+    // allocate temporary storage
+    g_allocator.DeviceAllocate((void**)&temp_storage,  temp_storage_reqd);
+    // Find maximum
+    cub::DeviceReduce::Max(temp_storage, temp_storage_reqd, d_data_x, &d_maxes[0], n_pts);
+    cub::DeviceReduce::Max(temp_storage, temp_storage_reqd, d_data_y, &d_maxes[1], n_pts);
+    cub::DeviceReduce::Max(temp_storage, temp_storage_reqd, d_data_z, &d_maxes[2], n_pts);
+    cub::DeviceReduce::Min(temp_storage, temp_storage_reqd, d_data_x, &d_mins[0], n_pts);
+    cub::DeviceReduce::Min(temp_storage, temp_storage_reqd, d_data_y, &d_mins[1], n_pts);
+    cub::DeviceReduce::Min(temp_storage, temp_storage_reqd, d_data_z, &d_mins[2], n_pts);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(&mins[0], d_mins, sizeof(float) * mins.size(), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&maxes[0], d_maxes, sizeof(float) * maxes.size(), cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+    float max_val = *std::max_element(maxes.begin(), maxes.end());
+    float min_val = *std::min_element(mins.begin(), mins.end());
+    std::cout << "range = [" << min_val << ", " << max_val << "]" << std::endl;
+
+    int tpb = 256;
+    int blocks = (n_pts + tpb - 1) / tpb;
+    makeCodes<<<blocks, tpb>>>(min_val, max_val, d_data_x, d_data_y, d_data_z, d_tree, n_pts);
+    cudaDeviceSynchronize();
 }
 
 RadixTree::~RadixTree() {

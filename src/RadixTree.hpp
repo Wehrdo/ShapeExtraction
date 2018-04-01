@@ -12,7 +12,7 @@
  */
 
 namespace RT {
-class Node {
+struct Node {
     // 63-bit morton code, packed to the right
     uint64_t mortonCode;
 
@@ -34,9 +34,16 @@ public:
     RadixTree(const PointCloud<float>& cloud);
     ~RadixTree();
 private:
+    
+
     cub::CachingDeviceAllocator g_allocator;
     std::unique_ptr<Node> h_tree;
+
+    // device data
     Node* d_tree;
+    float* d_data_x;
+    float* d_data_y;
+    float* d_data_z;
 
 };
 
