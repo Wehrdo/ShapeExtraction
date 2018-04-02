@@ -94,6 +94,7 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     DeviceReduce::Min(d_temp_storage, temp_storage_reqd, d_data_y, &d_mins[1], n_pts);
     DeviceReduce::Min(d_temp_storage, temp_storage_reqd, d_data_z, &d_mins[2], n_pts);
     cudaDeviceSynchronize();
+    CudaCheckError();
 
     cudaMemcpy(&mins[0], d_mins, sizeof(float) * mins.size(), cudaMemcpyDeviceToHost);
     cudaMemcpy(&maxes[0], d_maxes, sizeof(float) * maxes.size(), cudaMemcpyDeviceToHost);
@@ -118,27 +119,27 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 
     // Sort in ascending order
     d_temp_storage = nullptr;
-    uint64_t *d_keys, *d_keys_sorted;
-    Node* d_tree_sorted;
-    CudaCheckCall(cudaMalloc(&d_tree_sorted, tree_size));
+    uint64_t *d_keys;
     CudaCheckCall(cudaMalloc(&d_keys, sizeof(*d_keys) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_keys_sorted, sizeof(*d_keys_sorted) * n_pts));
     fillCodes<<<blocks, tpb>>>(d_tree, d_keys, n_pts);
     cudaDeviceSynchronize();
     CudaCheckError();
     CudaCheckCall(
         DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_reqd,
-                                   d_keys, d_keys_sorted,
-                                   d_tree, d_tree_sorted,
+                                   d_keys, d_keys,
+                                   d_tree, d_tree,
                                    n_pts)
     );
     CudaCheckCall(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_reqd));
     CudaCheckCall(
         DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_reqd,
-                                   d_keys, d_keys_sorted,
-                                   d_tree, d_tree_sorted,
+                                   d_keys, d_keys,
+                                   d_tree, d_tree,
                                    n_pts)
     );
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    g_allocator.DeviceFree(d_temp_storage);
 }
 
 RadixTree::~RadixTree() {
