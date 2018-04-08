@@ -7,6 +7,10 @@
 #include <array>
 #include <algorithm>
 #include <limits>
+#include <cstdint>
+#include <type_traits>
+
+#include <math.h>
 
 using namespace RT;
 using cub::DeviceReduce;
@@ -48,7 +52,7 @@ __global__ void makeCodes(const T minCoord,
     }
 }
 
-__global__ void fillCodes(const Node* nodes, decltype(nodes[0].mortonCode)* codes, const size_t N) {
+__global__ void fillCodes(const Node* nodes, Code_t* codes, const size_t N) {
     assert(threadIdx.y == threadIdx.z == 1);
     assert(blockIdx.y == blockIdx.z == 1);
 
@@ -58,13 +62,103 @@ __global__ void fillCodes(const Node* nodes, decltype(nodes[0].mortonCode)* code
     }
 }
 
-RadixTree::RadixTree(const PointCloud<float>& cloud) {
-    size_t n_pts = cloud.x_vals.size();
+// computes ceil(a / b)
+template<typename T>
+__device__ inline T ceil_div(T a, T b) {
+    // If a + b might overflow, do the following instead? (untested):
+    //     1 + ((x - 1) / y); // if x != 0
+    assert(!std::is_signed<decltype(a)>() || a >= 0);
+    assert(!std::is_signed<decltype(b)>() || b >= 0);
+    return (a + b - 1) / b;
+}
+
+// delta(a, b) is the length of the longest prefix between codes a and b
+__device__ inline uint_fast8_t delta(const Code_t a, const Code_t b) {
+    // Assuming first bit is 0. Asserts check that.
+    // Not necessary, so if want to store info in that bit in the future, requires a change
+    Code_t bit1_mask = (Code_t)1 << (sizeof(a) * 8 - 1);
+    assert(a & bit1_mask == 0);
+    assert(b & bit1_mask == 0);
+    return __clzll(a ^ b) - 1;
+}
+
+__global__ void constructTree(Node* nodes, const size_t N) {
+    assert(threadIdx.y == threadIdx.z == 1);
+    assert(blockIdx.y == blockIdx.z == 1);
+
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        auto code_i = nodes[i].mortonCode;
+        // Determine direction of the range (+1 or -1)
+        // TODO: This will break when i = 0 or i = n-1
+        auto delta_diff_right = delta(code_i, nodes[i+1].mortonCode);
+        auto delta_diff_left = delta(code_i, nodes[i-1].mortonCode);
+        int_fast8_t direction_difference = delta_diff_right - delta_diff_left;
+        int_fast8_t d = (direction_difference > 0) - (direction_difference < 0);
+        assert(d == -1 || d == 1);
+
+        // Compute upper bound for the length of the range
+        auto delta_min = delta(code_i, nodes[i - d].mortonCode);
+        Code_t l_max = 2;
+        // Cast to ptrdiff_t so in case the result is negative (since d is +/- 1), we can catch it and not index out of bounds
+        while (static_cast<ptrdiff_t>(i) + static_cast<ptrdiff_t>(l_max)*d >= 0 &&
+               i + l_max*d < N &&
+               delta(code_i, nodes[i + l_max * d].mortonCode) > delta_min) {
+            l_max *= 2;
+        }
+        // Find the other end using binary search
+        Code_t l = 0;
+        uint_fast8_t divisor;
+        size_t t;
+        for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
+            if (delta(code_i, nodes[i + (l + t)*d].mortonCode) > delta_min) {
+                l += t;
+            }
+        }
+        size_t j = i + l*d;
+        // Find the split position using binary search
+        auto delta_node = delta(nodes[i].mortonCode, nodes[j].mortonCode);
+        size_t s = 0;
+        for (t = ceil_div<Code_t>(l, 2), divisor = 2; t >= 1; divisor *= 2, t = ceil_div<Code_t>(l, divisor)) {
+            if (delta(code_i, nodes[i + (s + t)*d].mortonCode) > delta_node) {
+                s += t;
+            }
+        }
+
+        // Split position
+        size_t gamma = i + s*d + min(d, 0);
+        nodes[i].leftChild = gamma;
+        nodes[i].hasLeafLeft = (min(i, j) == gamma);
+        nodes[i].hasLeafRight = (max(i, j) == gamma+1);
+        // Set parents of left and right children, if they aren't leaves
+        // can't set this node as parent of its leaves, because the
+        // leaf also represents an internal node with a differnent parent
+        if (!nodes[i].hasLeafLeft) {
+            nodes[gamma].parent = i;
+        }
+        if (!nodes[i].hasLeafRight) {
+            nodes[gamma + 1].parent = i;
+        }
+    }
+}
+
+ std::tuple<int, int> makeLaunchParams(size_t n, int tpb = 512) {
+    // int tpb = 256;
+    int blocks = (n + tpb - 1) / tpb;
+    return std::make_tuple(blocks, tpb);
+ }
+
+void RadixTree::encodePoints(const PointCloud<float>& cloud) {
+    // Check that the cast is okay
+    assert(cloud.x_vals.size() <= std::numeric_limits<decltype(n_pts)>::max());
+    n_pts = static_cast<decltype(n_pts)>(cloud.x_vals.size());
+
     // Allocate for tree
     size_t tree_size = n_pts * sizeof(Node);
     CudaCheckCall(cudaMalloc(&d_tree, tree_size));
     // Allocate for raw data points
     size_t data_size = n_pts * sizeof(cloud.x_vals[0]);
+    float *d_data_x, *d_data_y, *d_data_z;
     CudaCheckCall(cudaMalloc(&d_data_x, data_size));
     CudaCheckCall(cudaMalloc(&d_data_y, data_size));
     CudaCheckCall(cudaMalloc(&d_data_z, data_size));
@@ -106,8 +200,8 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     float min_val = *std::min_element(mins.begin(), mins.end());
     // std::cout << "range = [" << min_val << ", " << max_val << "]" << std::endl;
 
-    int tpb = 256;
-    int blocks = (n_pts + tpb - 1) / tpb;
+    int blocks, tpb;
+    std::tie(blocks, tpb) = makeLaunchParams(n_pts);
     makeCodes<<<blocks, tpb>>>(min_val, max_val, d_data_x, d_data_y, d_data_z, d_tree, n_pts);
     cudaDeviceSynchronize();
     CudaCheckError();
@@ -116,21 +210,32 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     CudaCheckCall(cudaFree(d_data_x));
     CudaCheckCall(cudaFree(d_data_y));
     CudaCheckCall(cudaFree(d_data_z));
+}
+
+RadixTree::RadixTree(const PointCloud<float>& cloud) {
+    // fill up mortonCode in d_tree
+    encodePoints(cloud);
 
     // Sort in ascending order
-    d_temp_storage = nullptr;
-    uint64_t *d_keys;
+    // Just the Morton codes from the nodes
+    Code_t *d_keys;
     CudaCheckCall(cudaMalloc(&d_keys, sizeof(*d_keys) * n_pts));
+    int blocks, tpb;
+    std::tie(blocks, tpb) = makeLaunchParams(n_pts);
     fillCodes<<<blocks, tpb>>>(d_tree, d_keys, n_pts);
     cudaDeviceSynchronize();
     CudaCheckError();
+    void* d_temp_storage = nullptr;
+    size_t temp_storage_reqd = 0;
     CudaCheckCall(
+        // get storage requirements
         DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_reqd,
                                    d_keys, d_keys,
                                    d_tree, d_tree,
                                    n_pts)
     );
     CudaCheckCall(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_reqd));
+    // sort key-value pairs, where key is morton code (d_keys), and values are tree nodes
     CudaCheckCall(
         DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_reqd,
                                    d_keys, d_keys,
@@ -140,6 +245,9 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     cudaDeviceSynchronize();
     CudaCheckError();
     g_allocator.DeviceFree(d_temp_storage);
+
+    // Make tree
+
 }
 
 RadixTree::~RadixTree() {

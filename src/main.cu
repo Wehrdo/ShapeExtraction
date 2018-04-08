@@ -7,7 +7,7 @@ using std::cout;
 using std::endl;
 
 int main() {
-    auto cloud = KittiData::load("/home/dawehr/Development/pc_ransac/data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin");
+    auto cloud = KittiData::load("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin");
 
     RT::RadixTree tree(cloud);
 

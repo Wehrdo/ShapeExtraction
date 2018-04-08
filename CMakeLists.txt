@@ -14,6 +14,7 @@ target_include_directories(shapes PRIVATE cub)
 target_compile_features(shapes PUBLIC cxx_std_14)
 
 set_target_properties(shapes PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_CUDA_FLAGS "-arch=sm_61 --expt-relaxed-constexpr")
 
 # We need to explicitly state that we need all CUDA files in the 
 # particle library to be built with -dc as the member functions 
