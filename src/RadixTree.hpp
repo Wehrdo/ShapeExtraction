@@ -31,6 +31,10 @@ struct Node {
     size_t leftChild;
     // Index of parent
     size_t parent;
+
+    uint8_t prefixLength;
+    // Number of octree nodes between this node and its parent
+    uint8_t edgeNodes;
 };
 
 class RadixTree {

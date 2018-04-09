@@ -72,13 +72,26 @@ __device__ inline T ceil_div(T a, T b) {
     return (a + b - 1) / b;
 }
 
+__device__ inline int log2_ceil(Code_t x) {
+    static_assert(sizeof(x) == sizeof(long long int), "__clzll(x) is for long long int");
+    // Counting from LSB to MSB, number of bits before last '1'
+    // This is floor(log(x))
+    int n_lower_bits = (8 * sizeof(x)) - __clzll(x) - 1;
+    // Add 1 if 2^n_lower_bits is less than x
+    //     (i.e. we rounded down because x was not a power of 2)
+    return n_lower_bits + (x > (1 << n_lower_bits));
+}
+
 // delta(a, b) is the length of the longest prefix between codes a and b
-__device__ inline uint_fast8_t delta(const Code_t a, const Code_t b) {
+__device__ inline int_fast8_t delta(const Code_t a, const Code_t b) {
     // Assuming first bit is 0. Asserts check that.
     // Not necessary, so if want to store info in that bit in the future, requires a change
     Code_t bit1_mask = (Code_t)1 << (sizeof(a) * 8 - 1);
-    assert(a & bit1_mask == 0);
-    assert(b & bit1_mask == 0);
+	//if (a & bit1_mask) {
+	//	printf("omg");
+	//}
+    assert((a & bit1_mask) == 0);
+    assert((b & bit1_mask) == 0);
     return __clzll(a ^ b) - 1;
 }
 
@@ -87,39 +100,59 @@ __global__ void constructTree(Node* nodes, const size_t N) {
     assert(blockIdx.y == blockIdx.z == 1);
 
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < N) {
+    if (i < N-1) {
         auto code_i = nodes[i].mortonCode;
         // Determine direction of the range (+1 or -1)
         // TODO: This will break when i = 0 or i = n-1
-        auto delta_diff_right = delta(code_i, nodes[i+1].mortonCode);
-        auto delta_diff_left = delta(code_i, nodes[i-1].mortonCode);
-        int_fast8_t direction_difference = delta_diff_right - delta_diff_left;
-        int_fast8_t d = (direction_difference > 0) - (direction_difference < 0);
-        assert(d == -1 || d == 1);
+        int_fast8_t d;
+        if (i == 0) {
+            d = 1;
+        }
+        else {
+            auto delta_diff_right = delta(code_i, nodes[i+1].mortonCode);
+            auto delta_diff_left = delta(code_i, nodes[i-1].mortonCode);
+            int_fast8_t direction_difference = delta_diff_right - delta_diff_left;
+            d = (direction_difference > 0) - (direction_difference < 0);
+        }
 
         // Compute upper bound for the length of the range
-        auto delta_min = delta(code_i, nodes[i - d].mortonCode);
-        Code_t l_max = 2;
-        // Cast to ptrdiff_t so in case the result is negative (since d is +/- 1), we can catch it and not index out of bounds
-        while (static_cast<ptrdiff_t>(i) + static_cast<ptrdiff_t>(l_max)*d >= 0 &&
-               i + l_max*d < N &&
-               delta(code_i, nodes[i + l_max * d].mortonCode) > delta_min) {
-            l_max *= 2;
-        }
-        // Find the other end using binary search
+        
         Code_t l = 0;
-        uint_fast8_t divisor;
-        size_t t;
-        for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
-            if (delta(code_i, nodes[i + (l + t)*d].mortonCode) > delta_min) {
-                l += t;
+        if (i == 0) {
+            // First node is root, covering whole tree
+            l = N - 1;
+        }
+        // else if (i == N - 1) {
+        //     l = 0;
+        // }
+        else {
+            auto delta_min = delta(code_i, nodes[i - d].mortonCode);
+            Code_t l_max = 2;
+            // Cast to ptrdiff_t so in case the result is negative (since d is +/- 1), we can catch it and not index out of bounds
+            while (static_cast<ptrdiff_t>(i) + static_cast<ptrdiff_t>(l_max)*d >= 0 &&
+                i + l_max*d < N &&
+                delta(code_i, nodes[i + l_max * d].mortonCode) > delta_min) {
+                l_max *= 2;
+            }
+            size_t t;
+            int divisor;
+            // Find the other end using binary search
+            for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
+                if (delta(code_i, nodes[i + (l + t)*d].mortonCode) > delta_min) {
+                    l += t;
+                }
             }
         }
         size_t j = i + l*d;
         // Find the split position using binary search
         auto delta_node = delta(nodes[i].mortonCode, nodes[j].mortonCode);
+        nodes[i].prefixLength = delta_node;
         size_t s = 0;
-        for (t = ceil_div<Code_t>(l, 2), divisor = 2; t >= 1; divisor *= 2, t = ceil_div<Code_t>(l, divisor)) {
+        size_t t;
+        int max_divisor = 1 << log2_ceil(l);
+        int divisor = 2;
+        for (t = ceil_div<Code_t>(l, 2); divisor <= max_divisor; divisor <<= 1, t = ceil_div<Code_t>(l, divisor)) {
+        // for (t = ceil_div<Code_t>(l, 2), divisor = 2; t >= 1; divisor *= 2, t = ceil_div<Code_t>(l, divisor)) {
             if (delta(code_i, nodes[i + (s + t)*d].mortonCode) > delta_node) {
                 s += t;
             }
@@ -141,6 +174,8 @@ __global__ void constructTree(Node* nodes, const size_t N) {
         }
     }
 }
+
+// __global__ void calcEdgeNodes(Node* )
 
  std::tuple<int, int> makeLaunchParams(size_t n, int tpb = 512) {
     // int tpb = 256;
@@ -218,8 +253,9 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 
     // Sort in ascending order
     // Just the Morton codes from the nodes
-    Code_t *d_keys;
+    Code_t *d_keys, *d_keys_sorted;
     CudaCheckCall(cudaMalloc(&d_keys, sizeof(*d_keys) * n_pts));
+    CudaCheckCall(cudaMalloc(&d_keys_sorted, sizeof(*d_keys_sorted) * n_pts));
     int blocks, tpb;
     std::tie(blocks, tpb) = makeLaunchParams(n_pts);
     fillCodes<<<blocks, tpb>>>(d_tree, d_keys, n_pts);
@@ -227,27 +263,42 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     CudaCheckError();
     void* d_temp_storage = nullptr;
     size_t temp_storage_reqd = 0;
+    Node* d_tree_sorted;
+    CudaCheckCall(cudaMalloc(&d_tree_sorted, sizeof(*d_tree_sorted)*n_pts));
     CudaCheckCall(
         // get storage requirements
         DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_reqd,
-                                   d_keys, d_keys,
-                                   d_tree, d_tree,
+                                   d_keys, d_keys_sorted,
+                                   d_tree, d_tree_sorted,
                                    n_pts)
     );
     CudaCheckCall(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_reqd));
     // sort key-value pairs, where key is morton code (d_keys), and values are tree nodes
     CudaCheckCall(
         DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_reqd,
-                                   d_keys, d_keys,
-                                   d_tree, d_tree,
+                                   d_keys, d_keys_sorted,
+                                   d_tree, d_tree_sorted,
                                    n_pts)
     );
     cudaDeviceSynchronize();
     CudaCheckError();
     g_allocator.DeviceFree(d_temp_storage);
+    // TODO: free d_tree
 
     // Make tree
+    std::tie(blocks, tpb) = makeLaunchParams(n_pts);
+    constructTree<<<blocks, tpb>>>(d_tree_sorted, n_pts);
+	cudaDeviceSynchronize();
+    CudaCheckError();
 
+
+    // Node* h_tree = new Node[n_pts]();
+    // CudaCheckCall(cudaMemcpy(h_tree, d_tree_sorted, sizeof(Node)*n_pts, cudaMemcpyDeviceToHost));
+    // for (int i = 0; i < n_pts; ++i) {
+    //     // std::cout << std::hex << h_tree[i].mortonCode << ", left = " << h_tree[i].leftChild << ",parent = " << h_tree[i].parent << std::endl;
+    //     printf("idx = %d, code = %llx, left = %d, parent = %d\n",
+    //             i, h_tree[i].mortonCode, h_tree[i].leftChild, h_tree[i].parent);
+    // }
 }
 
 RadixTree::~RadixTree() {

@@ -17,4 +17,5 @@ int main() {
     // for (size_t i = 0; i < 50 && i < n_pts; ++i) {
     //     cout << cloud.x_vals[i] << ", " << cloud.y_vals[i] << ", " << cloud.z_vals[i] << endl;
     // }
+    return 0;
 }
