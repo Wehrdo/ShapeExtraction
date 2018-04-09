@@ -33,7 +33,7 @@ struct Nodes {
     size_t* parent;
 
     // Number of octree nodes between this node and its parent
-    uint8_t* edgeNodes;
+    uint8_t* edgeNode;
 };
 
 class RadixTree {

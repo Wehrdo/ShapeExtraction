@@ -181,7 +181,18 @@ __global__ void constructTree(const Code_t* codes,
     }
 }
 
-// __global__ void calcEdgeNodes(Node* )
+__global__ void calcEdgeNodes(
+    const std::remove_pointer<decltype(Nodes::prefixN)>::type *prefixN,
+    const std::remove_pointer<decltype(Nodes::parent)>::type *parents,
+    std::remove_pointer<decltype(Nodes::edgeNode)>::type *edgeNodes,
+    const size_t N) {
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i > 0 && i < N-1) {
+        int my_depth = prefixN[i] / 3;
+        int parent_depth = prefixN[parents[i]] / 3;
+        edgeNodes[i] = my_depth - parent_depth;
+    }
+}
 
  std::tuple<int, int> makeLaunchParams(size_t n, int tpb = 512) {
     // int tpb = 256;
@@ -257,7 +268,7 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     CudaCheckCall(cudaMalloc(&d_tree.prefixN, sizeof(*d_tree.prefixN) * n_pts));
     CudaCheckCall(cudaMalloc(&d_tree.leftChild, sizeof(*d_tree.leftChild) * n_pts));
     CudaCheckCall(cudaMalloc(&d_tree.parent, sizeof(*d_tree.parent) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_tree.edgeNodes, sizeof(*d_tree.edgeNodes) * n_pts));
+    CudaCheckCall(cudaMalloc(&d_tree.edgeNode, sizeof(*d_tree.edgeNode) * n_pts));
 
     // fill up mortonCode in d_tree
     encodePoints(cloud);
@@ -302,6 +313,14 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 	cudaDeviceSynchronize();
     CudaCheckError();
 
+    
+    // Copy a "1" to the first element
+    std::remove_pointer<decltype(Nodes::edgeNode)>::type edgeNode_1 = 1;
+    CudaCheckCall(cudaMemcpyAsync(d_tree.edgeNode, &edgeNode_1, sizeof(edgeNode_1), cudaMemcpyHostToDevice));
+    calcEdgeNodes<<<blocks, tpb>>>(d_tree.prefixN, d_tree.parent, d_tree.edgeNode, n_pts);
+	cudaDeviceSynchronize();
+    CudaCheckError();
+
 
     // Code_t* h_codes = new Code_t[n_pts]();
     // CudaCheckCall(cudaMemcpy(h_codes, d_tree.mortonCode, sizeof(Code_t) * n_pts, cudaMemcpyDeviceToHost));
@@ -327,5 +346,5 @@ RadixTree::~RadixTree() {
     CudaCheckCall(cudaFree(d_tree.prefixN));
     CudaCheckCall(cudaFree(d_tree.leftChild));
     CudaCheckCall(cudaFree(d_tree.parent));
-    CudaCheckCall(cudaFree(d_tree.edgeNodes));
+    CudaCheckCall(cudaFree(d_tree.edgeNode));
 }
