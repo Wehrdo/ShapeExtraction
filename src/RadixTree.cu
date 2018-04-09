@@ -22,7 +22,7 @@ __global__ void makeCodes(const T minCoord,
                           const T* __restrict__ x_vals,
                           const T* __restrict__ y_vals,
                           const T* __restrict__ z_vals,
-                          Node* nodes,
+                          Code_t* codes,
                           const size_t N) {
     // only supports 1-dimension blocks and grids
     assert(threadIdx.y == threadIdx.z == 1);
@@ -36,7 +36,7 @@ __global__ void makeCodes(const T minCoord,
         uint32_t x_coord = bitscale * ((x_vals[idx] - minCoord) / range);
         uint32_t y_coord = bitscale * ((y_vals[idx] - minCoord) / range);
         uint32_t z_coord = bitscale * ((z_vals[idx] - minCoord) / range);
-        nodes[idx].mortonCode = morton3D_64_encode(x_coord, y_coord, z_coord);
+        codes[idx] = morton3D_64_encode(x_coord, y_coord, z_coord);
         // if (idx == 0) {
         //     // printf("min = %f, max = %f\n", minCoord, maxCoord);
         //     printf("%u, %u, %u\n", x_coord, y_coord, z_coord);
@@ -52,15 +52,15 @@ __global__ void makeCodes(const T minCoord,
     }
 }
 
-__global__ void fillCodes(const Node* nodes, Code_t* codes, const size_t N) {
-    assert(threadIdx.y == threadIdx.z == 1);
-    assert(blockIdx.y == blockIdx.z == 1);
+// __global__ void fillCodes(const Node* nodes, Code_t* codes, const size_t N) {
+//     assert(threadIdx.y == threadIdx.z == 1);
+//     assert(blockIdx.y == blockIdx.z == 1);
 
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < N) {
-        codes[idx] = nodes[idx].mortonCode;
-    }
-}
+//     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+//     if (idx < N) {
+//         codes[idx] = nodes[idx].mortonCode;
+//     }
+// }
 
 // computes ceil(a / b)
 template<typename T>
@@ -95,13 +95,19 @@ __device__ inline int_fast8_t delta(const Code_t a, const Code_t b) {
     return __clzll(a ^ b) - 1;
 }
 
-__global__ void constructTree(Node* nodes, const size_t N) {
+__global__ void constructTree(const Code_t* codes,
+                              bool* hasLeafLeft,
+                              bool* hasLeafRight,
+                              size_t* leftChild,
+                              size_t* parent,
+                              uint8_t* prefixN,
+                              const size_t N) {
     assert(threadIdx.y == threadIdx.z == 1);
     assert(blockIdx.y == blockIdx.z == 1);
 
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N-1) {
-        auto code_i = nodes[i].mortonCode;
+        auto code_i = codes[i];
         // Determine direction of the range (+1 or -1)
         // TODO: This will break when i = 0 or i = n-1
         int_fast8_t d;
@@ -109,8 +115,8 @@ __global__ void constructTree(Node* nodes, const size_t N) {
             d = 1;
         }
         else {
-            auto delta_diff_right = delta(code_i, nodes[i+1].mortonCode);
-            auto delta_diff_left = delta(code_i, nodes[i-1].mortonCode);
+            auto delta_diff_right = delta(code_i, codes[i+1]);
+            auto delta_diff_left = delta(code_i, codes[i-1]);
             int_fast8_t direction_difference = delta_diff_right - delta_diff_left;
             d = (direction_difference > 0) - (direction_difference < 0);
         }
@@ -126,51 +132,51 @@ __global__ void constructTree(Node* nodes, const size_t N) {
         //     l = 0;
         // }
         else {
-            auto delta_min = delta(code_i, nodes[i - d].mortonCode);
+            auto delta_min = delta(code_i, codes[i - d]);
             Code_t l_max = 2;
             // Cast to ptrdiff_t so in case the result is negative (since d is +/- 1), we can catch it and not index out of bounds
             while (static_cast<ptrdiff_t>(i) + static_cast<ptrdiff_t>(l_max)*d >= 0 &&
                 i + l_max*d < N &&
-                delta(code_i, nodes[i + l_max * d].mortonCode) > delta_min) {
+                delta(code_i, codes[i + l_max * d]) > delta_min) {
                 l_max *= 2;
             }
             size_t t;
             int divisor;
             // Find the other end using binary search
             for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
-                if (delta(code_i, nodes[i + (l + t)*d].mortonCode) > delta_min) {
+                if (delta(code_i, codes[i + (l + t)*d]) > delta_min) {
                     l += t;
                 }
             }
         }
         size_t j = i + l*d;
         // Find the split position using binary search
-        auto delta_node = delta(nodes[i].mortonCode, nodes[j].mortonCode);
-        nodes[i].prefixLength = delta_node;
+        auto delta_node = delta(codes[i], codes[j]);
+        prefixN[i] = delta_node;
         size_t s = 0;
         size_t t;
         int max_divisor = 1 << log2_ceil(l);
         int divisor = 2;
         for (t = ceil_div<Code_t>(l, 2); divisor <= max_divisor; divisor <<= 1, t = ceil_div<Code_t>(l, divisor)) {
         // for (t = ceil_div<Code_t>(l, 2), divisor = 2; t >= 1; divisor *= 2, t = ceil_div<Code_t>(l, divisor)) {
-            if (delta(code_i, nodes[i + (s + t)*d].mortonCode) > delta_node) {
+            if (delta(code_i, codes[i + (s + t)*d]) > delta_node) {
                 s += t;
             }
         }
 
         // Split position
         size_t gamma = i + s*d + min(d, 0);
-        nodes[i].leftChild = gamma;
-        nodes[i].hasLeafLeft = (min(i, j) == gamma);
-        nodes[i].hasLeafRight = (max(i, j) == gamma+1);
+        leftChild[i] = gamma;
+        hasLeafLeft[i] = (min(i, j) == gamma);
+        hasLeafRight[i] = (max(i, j) == gamma+1);
         // Set parents of left and right children, if they aren't leaves
         // can't set this node as parent of its leaves, because the
         // leaf also represents an internal node with a differnent parent
-        if (!nodes[i].hasLeafLeft) {
-            nodes[gamma].parent = i;
+        if (!hasLeafLeft[i]) {
+            parent[gamma] = i;
         }
-        if (!nodes[i].hasLeafRight) {
-            nodes[gamma + 1].parent = i;
+        if (!hasLeafRight[i]) {
+            parent[gamma + 1] = i;
         }
     }
 }
@@ -184,13 +190,6 @@ __global__ void constructTree(Node* nodes, const size_t N) {
  }
 
 void RadixTree::encodePoints(const PointCloud<float>& cloud) {
-    // Check that the cast is okay
-    assert(cloud.x_vals.size() <= std::numeric_limits<decltype(n_pts)>::max());
-    n_pts = static_cast<decltype(n_pts)>(cloud.x_vals.size());
-
-    // Allocate for tree
-    size_t tree_size = n_pts * sizeof(Node);
-    CudaCheckCall(cudaMalloc(&d_tree, tree_size));
     // Allocate for raw data points
     size_t data_size = n_pts * sizeof(cloud.x_vals[0]);
     float *d_data_x, *d_data_y, *d_data_z;
@@ -237,7 +236,7 @@ void RadixTree::encodePoints(const PointCloud<float>& cloud) {
 
     int blocks, tpb;
     std::tie(blocks, tpb) = makeLaunchParams(n_pts);
-    makeCodes<<<blocks, tpb>>>(min_val, max_val, d_data_x, d_data_y, d_data_z, d_tree, n_pts);
+    makeCodes<<<blocks, tpb>>>(min_val, max_val, d_data_x, d_data_y, d_data_z, d_tree.mortonCode, n_pts);
     cudaDeviceSynchronize();
     CudaCheckError();
 
@@ -248,59 +247,85 @@ void RadixTree::encodePoints(const PointCloud<float>& cloud) {
 }
 
 RadixTree::RadixTree(const PointCloud<float>& cloud) {
+    // Check that the cast is okay
+    assert(cloud.x_vals.size() <= std::numeric_limits<decltype(n_pts)>::max());
+    n_pts = static_cast<decltype(n_pts)>(cloud.x_vals.size());
+    // allocate memory for tree
+    CudaCheckCall(cudaMalloc(&d_tree.mortonCode, sizeof(*d_tree.mortonCode) * n_pts));
+    CudaCheckCall(cudaMalloc(&d_tree.hasLeafLeft, sizeof(*d_tree.hasLeafRight) * n_pts));
+    CudaCheckCall(cudaMalloc(&d_tree.hasLeafRight, sizeof(*d_tree.hasLeafRight) * n_pts));
+    CudaCheckCall(cudaMalloc(&d_tree.prefixN, sizeof(*d_tree.prefixN) * n_pts));
+    CudaCheckCall(cudaMalloc(&d_tree.leftChild, sizeof(*d_tree.leftChild) * n_pts));
+    CudaCheckCall(cudaMalloc(&d_tree.parent, sizeof(*d_tree.parent) * n_pts));
+    CudaCheckCall(cudaMalloc(&d_tree.edgeNodes, sizeof(*d_tree.edgeNodes) * n_pts));
+
     // fill up mortonCode in d_tree
     encodePoints(cloud);
 
     // Sort in ascending order
     // Just the Morton codes from the nodes
-    Code_t *d_keys, *d_keys_sorted;
-    CudaCheckCall(cudaMalloc(&d_keys, sizeof(*d_keys) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_keys_sorted, sizeof(*d_keys_sorted) * n_pts));
-    int blocks, tpb;
-    std::tie(blocks, tpb) = makeLaunchParams(n_pts);
-    fillCodes<<<blocks, tpb>>>(d_tree, d_keys, n_pts);
-    cudaDeviceSynchronize();
-    CudaCheckError();
+    Code_t* d_codes_sorted;
+    CudaCheckCall(cudaMalloc(&d_codes_sorted, sizeof(*d_codes_sorted) * n_pts));
     void* d_temp_storage = nullptr;
     size_t temp_storage_reqd = 0;
-    Node* d_tree_sorted;
-    CudaCheckCall(cudaMalloc(&d_tree_sorted, sizeof(*d_tree_sorted)*n_pts));
     CudaCheckCall(
         // get storage requirements
-        DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_reqd,
-                                   d_keys, d_keys_sorted,
-                                   d_tree, d_tree_sorted,
-                                   n_pts)
+        DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_reqd,
+                                  d_tree.mortonCode, d_codes_sorted,
+                                  n_pts)
     );
     CudaCheckCall(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_reqd));
     // sort key-value pairs, where key is morton code (d_keys), and values are tree nodes
     CudaCheckCall(
-        DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_reqd,
-                                   d_keys, d_keys_sorted,
-                                   d_tree, d_tree_sorted,
+        DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_reqd,
+                                   d_tree.mortonCode, d_codes_sorted,
                                    n_pts)
     );
     cudaDeviceSynchronize();
     CudaCheckError();
     g_allocator.DeviceFree(d_temp_storage);
-    // TODO: free d_tree
+    // Swap out keys for sorted keys
+    // Okay to do at this point, because nothing else in d_tree has been filled
+    CudaCheckCall(cudaFree(d_tree.mortonCode));
+    d_tree.mortonCode = d_codes_sorted;
 
     // Make tree
+    int blocks, tpb;
     std::tie(blocks, tpb) = makeLaunchParams(n_pts);
-    constructTree<<<blocks, tpb>>>(d_tree_sorted, n_pts);
+    constructTree<<<blocks, tpb>>>(d_tree.mortonCode,
+                                   d_tree.hasLeafLeft,
+                                   d_tree.hasLeafRight,
+                                   d_tree.leftChild,
+                                   d_tree.parent,
+                                   d_tree.prefixN,
+                                   n_pts);
 	cudaDeviceSynchronize();
     CudaCheckError();
 
 
-    // Node* h_tree = new Node[n_pts]();
-    // CudaCheckCall(cudaMemcpy(h_tree, d_tree_sorted, sizeof(Node)*n_pts, cudaMemcpyDeviceToHost));
+    // Code_t* h_codes = new Code_t[n_pts]();
+    // CudaCheckCall(cudaMemcpy(h_codes, d_tree.mortonCode, sizeof(Code_t) * n_pts, cudaMemcpyDeviceToHost));
+    // //auto h_leftChild = d_tree.mortonCode;
+    // //auto h_parent = d_tree.parent;
+    // auto h_leftChild = new std::remove_pointer<decltype(d_tree.leftChild)>::type[n_pts];
+    // auto h_parent = new std::remove_pointer<decltype(d_tree.parent)>::type[n_pts];
+    // //Code_t* h_leftChild = new std::remove_pointer<decltype(d_tree.mortonCode)>::type[n_pts]();
+    // CudaCheckCall(cudaMemcpy(h_codes, d_tree.mortonCode, sizeof(*h_codes) * n_pts, cudaMemcpyDeviceToHost));
+    // CudaCheckCall(cudaMemcpy(h_leftChild, d_tree.leftChild, sizeof(*h_leftChild) * n_pts, cudaMemcpyDeviceToHost));
+    // CudaCheckCall(cudaMemcpy(h_parent, d_tree.parent, sizeof(*h_parent) * n_pts, cudaMemcpyDeviceToHost));
     // for (int i = 0; i < n_pts; ++i) {
     //     // std::cout << std::hex << h_tree[i].mortonCode << ", left = " << h_tree[i].leftChild << ",parent = " << h_tree[i].parent << std::endl;
     //     printf("idx = %d, code = %llx, left = %d, parent = %d\n",
-    //             i, h_tree[i].mortonCode, h_tree[i].leftChild, h_tree[i].parent);
+    //             i, h_codes[i], h_leftChild[i], h_parent[i]);
     // }
 }
 
 RadixTree::~RadixTree() {
-    CudaCheckCall(cudaFree(d_tree));
+    CudaCheckCall(cudaFree(d_tree.mortonCode));
+    CudaCheckCall(cudaFree(d_tree.hasLeafLeft));
+    CudaCheckCall(cudaFree(d_tree.hasLeafRight));
+    CudaCheckCall(cudaFree(d_tree.prefixN));
+    CudaCheckCall(cudaFree(d_tree.leftChild));
+    CudaCheckCall(cudaFree(d_tree.parent));
+    CudaCheckCall(cudaFree(d_tree.edgeNodes));
 }

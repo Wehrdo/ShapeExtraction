@@ -13,28 +13,27 @@
 
 namespace RT {
 typedef uint64_t Code_t;
-struct Node {
+struct Nodes {
     // 63-bit morton code, packed to the right
-    Code_t mortonCode;
+    Code_t* mortonCode;
 
     // Flag determining whether this is a leaf node or not
     // TODO: Store "leaf" flag in first bit of mortonCode
-    bool hasLeafLeft;
-    bool hasLeafRight;
+    bool* hasLeafLeft;
+    bool* hasLeafRight;
 
     // The number of bits in the mortonCode this node represents
     // Corresponds to delta_node in [Karras]
-    uint8_t prefixN;
+    uint8_t* prefixN;
     
     // Index of left child of this node
     // Right child is leftChild + 1
-    size_t leftChild;
+    size_t* leftChild;
     // Index of parent
-    size_t parent;
+    size_t* parent;
 
-    uint8_t prefixLength;
     // Number of octree nodes between this node and its parent
-    uint8_t edgeNodes;
+    uint8_t* edgeNodes;
 };
 
 class RadixTree {
@@ -45,10 +44,9 @@ private:
     void encodePoints(const PointCloud<float>& cloud);
 
     cub::CachingDeviceAllocator g_allocator;
-    std::unique_ptr<Node> h_tree;
 
-    // device data
-    Node* d_tree;
+    // device tree
+    struct Nodes d_tree;
 	// n_pts is an int only to match CUB type definitions.
     int n_pts; // number of points
     // Node* d_tree_internal;
