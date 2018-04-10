@@ -3,6 +3,7 @@
 #include "libmorton/include/morton.h"
 #include "cub/device/device_reduce.cuh"
 #include "cub/device/device_radix_sort.cuh"
+#include "cub/device/device_scan.cuh"
 
 #include <array>
 #include <algorithm>
@@ -15,6 +16,7 @@
 using namespace RT;
 using cub::DeviceReduce;
 using cub::DeviceRadixSort;
+using cub::DeviceScan;
 
 template <typename T>
 __global__ void makeCodes(const T minCoord,
@@ -106,7 +108,7 @@ __global__ void constructTree(const Code_t* codes,
     assert(blockIdx.y == blockIdx.z == 1);
 
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < N-1) {
+    if (i < N) {
         auto code_i = codes[i];
         // Determine direction of the range (+1 or -1)
         // TODO: This will break when i = 0 or i = n-1
@@ -295,6 +297,9 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     cudaDeviceSynchronize();
     CudaCheckError();
     g_allocator.DeviceFree(d_temp_storage);
+    // TODO: Remove duplicates
+    int n_nodes = n_pts - 1;
+
     // Swap out keys for sorted keys
     // Okay to do at this point, because nothing else in d_tree has been filled
     CudaCheckCall(cudaFree(d_tree.mortonCode));
@@ -309,18 +314,36 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
                                    d_tree.leftChild,
                                    d_tree.parent,
                                    d_tree.prefixN,
-                                   n_pts);
+                                   n_nodes);
 	cudaDeviceSynchronize();
     CudaCheckError();
 
+    // Copy a "1" to the first element to account for the root
     
-    // Copy a "1" to the first element
     std::remove_pointer<decltype(Nodes::edgeNode)>::type edgeNode_1 = 1;
     CudaCheckCall(cudaMemcpyAsync(d_tree.edgeNode, &edgeNode_1, sizeof(edgeNode_1), cudaMemcpyHostToDevice));
-    calcEdgeNodes<<<blocks, tpb>>>(d_tree.prefixN, d_tree.parent, d_tree.edgeNode, n_pts);
+    calcEdgeNodes<<<blocks, tpb>>>(d_tree.prefixN, d_tree.parent, d_tree.edgeNode, n_nodes);
 	cudaDeviceSynchronize();
     CudaCheckError();
 
+    // Inclusive prefix sum 
+    std::remove_pointer<decltype(Nodes::edgeNode)>::type *oc_node_offsets;
+    CudaCheckCall(cudaMalloc(&oc_node_offsets, n_nodes * sizeof(*oc_node_offsets)));
+    d_temp_storage = nullptr;
+    CudaCheckCall(
+        DeviceScan::InclusiveSum(d_temp_storage, temp_storage_reqd,
+                d_tree.edgeNode, oc_node_offsets,
+                n_nodes)
+    );
+    CudaCheckCall(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_reqd));
+    CudaCheckCall(
+        DeviceScan::InclusiveSum(d_temp_storage, temp_storage_reqd,
+                d_tree.edgeNode, oc_node_offsets,
+                n_nodes)
+    );
+	cudaDeviceSynchronize();
+    CudaCheckError();
+    g_allocator.DeviceFree(d_temp_storage);
 
     // Code_t* h_codes = new Code_t[n_pts]();
     // CudaCheckCall(cudaMemcpy(h_codes, d_tree.mortonCode, sizeof(Code_t) * n_pts, cudaMemcpyDeviceToHost));
