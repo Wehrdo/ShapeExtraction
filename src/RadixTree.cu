@@ -1,10 +1,10 @@
 #include "RadixTree.hpp"
-#include "CudaCommon.cuh"
+#include "CudaCommon.hpp"
 #include "libmorton/include/morton.h"
 #include "cub/device/device_reduce.cuh"
 #include "cub/device/device_radix_sort.cuh"
-#include "cub/device/device_scan.cuh"
 
+#include <memory>
 #include <array>
 #include <algorithm>
 #include <limits>
@@ -16,7 +16,6 @@
 using namespace RT;
 using cub::DeviceReduce;
 using cub::DeviceRadixSort;
-using cub::DeviceScan;
 
 template <typename T>
 __global__ void makeCodes(const T minCoord,
@@ -183,25 +182,6 @@ __global__ void constructTree(const Code_t* codes,
     }
 }
 
-__global__ void calcEdgeNodes(
-    const std::remove_pointer<decltype(Nodes::prefixN)>::type *prefixN,
-    const std::remove_pointer<decltype(Nodes::parent)>::type *parents,
-    std::remove_pointer<decltype(Nodes::edgeNode)>::type *edgeNodes,
-    const size_t N) {
-    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i > 0 && i < N-1) {
-        int my_depth = prefixN[i] / 3;
-        int parent_depth = prefixN[parents[i]] / 3;
-        edgeNodes[i] = my_depth - parent_depth;
-    }
-}
-
- std::tuple<int, int> makeLaunchParams(size_t n, int tpb = 512) {
-    // int tpb = 256;
-    int blocks = (n + tpb - 1) / tpb;
-    return std::make_tuple(blocks, tpb);
- }
-
 void RadixTree::encodePoints(const PointCloud<float>& cloud) {
     // Allocate for raw data points
     size_t data_size = n_pts * sizeof(cloud.x_vals[0]);
@@ -270,7 +250,6 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     CudaCheckCall(cudaMalloc(&d_tree.prefixN, sizeof(*d_tree.prefixN) * n_pts));
     CudaCheckCall(cudaMalloc(&d_tree.leftChild, sizeof(*d_tree.leftChild) * n_pts));
     CudaCheckCall(cudaMalloc(&d_tree.parent, sizeof(*d_tree.parent) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_tree.edgeNode, sizeof(*d_tree.edgeNode) * n_pts));
 
     // fill up mortonCode in d_tree
     encodePoints(cloud);
@@ -298,7 +277,7 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     CudaCheckError();
     g_allocator.DeviceFree(d_temp_storage);
     // TODO: Remove duplicates
-    int n_nodes = n_pts - 1;
+    n_nodes = n_pts - 1;
 
     // Swap out keys for sorted keys
     // Okay to do at this point, because nothing else in d_tree has been filled
@@ -307,7 +286,7 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 
     // Make tree
     int blocks, tpb;
-    std::tie(blocks, tpb) = makeLaunchParams(n_pts);
+    std::tie(blocks, tpb) = makeLaunchParams(n_nodes);
     constructTree<<<blocks, tpb>>>(d_tree.mortonCode,
                                    d_tree.hasLeafLeft,
                                    d_tree.hasLeafRight,
@@ -317,33 +296,6 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
                                    n_nodes);
 	cudaDeviceSynchronize();
     CudaCheckError();
-
-    // Copy a "1" to the first element to account for the root
-    
-    std::remove_pointer<decltype(Nodes::edgeNode)>::type edgeNode_1 = 1;
-    CudaCheckCall(cudaMemcpyAsync(d_tree.edgeNode, &edgeNode_1, sizeof(edgeNode_1), cudaMemcpyHostToDevice));
-    calcEdgeNodes<<<blocks, tpb>>>(d_tree.prefixN, d_tree.parent, d_tree.edgeNode, n_nodes);
-	cudaDeviceSynchronize();
-    CudaCheckError();
-
-    // Inclusive prefix sum 
-    std::remove_pointer<decltype(Nodes::edgeNode)>::type *oc_node_offsets;
-    CudaCheckCall(cudaMalloc(&oc_node_offsets, n_nodes * sizeof(*oc_node_offsets)));
-    d_temp_storage = nullptr;
-    CudaCheckCall(
-        DeviceScan::InclusiveSum(d_temp_storage, temp_storage_reqd,
-                d_tree.edgeNode, oc_node_offsets,
-                n_nodes)
-    );
-    CudaCheckCall(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_reqd));
-    CudaCheckCall(
-        DeviceScan::InclusiveSum(d_temp_storage, temp_storage_reqd,
-                d_tree.edgeNode, oc_node_offsets,
-                n_nodes)
-    );
-	cudaDeviceSynchronize();
-    CudaCheckError();
-    g_allocator.DeviceFree(d_temp_storage);
 
     // Code_t* h_codes = new Code_t[n_pts]();
     // CudaCheckCall(cudaMemcpy(h_codes, d_tree.mortonCode, sizeof(Code_t) * n_pts, cudaMemcpyDeviceToHost));
@@ -369,5 +321,4 @@ RadixTree::~RadixTree() {
     CudaCheckCall(cudaFree(d_tree.prefixN));
     CudaCheckCall(cudaFree(d_tree.leftChild));
     CudaCheckCall(cudaFree(d_tree.parent));
-    CudaCheckCall(cudaFree(d_tree.edgeNode));
 }

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <utility>
+#include <tuple>
 
 /*
  * From https://codeyarns.com/2011/03/02/how-to-do-error-checking-in-cuda/
@@ -53,3 +55,5 @@ inline void __cudaCheckError( const char *file, const int line )
 
     return;
 }
+
+ std::tuple<int, int> makeLaunchParams(size_t n, int tpb = 512);

@@ -1,10 +1,11 @@
+#pragma once
+
 #include "PointCloud.hpp"
 #include <cuda_runtime_api.h>
 #include <cuda.h>
 #include "cub/util_allocator.cuh"
 
 #include <cstdint>
-#include <memory>
 
 /*
  * Implementation of the algorithm described by Karras in
@@ -31,29 +32,25 @@ struct Nodes {
     size_t* leftChild;
     // Index of parent
     size_t* parent;
-
-    // Number of octree nodes between this node and its parent
-    uint8_t* edgeNode;
 };
 
 class RadixTree {
 public:
     RadixTree(const PointCloud<float>& cloud);
     ~RadixTree();
+    // radix tree on GPU
+    struct Nodes d_tree;
+    // Number of tree nodes
+    int n_nodes;
 private:
+    // Encodes point cloud into mortonCode array of d_tree
     void encodePoints(const PointCloud<float>& cloud);
 
+    // caching device allocator for CUB temporary storage
     cub::CachingDeviceAllocator g_allocator;
 
-    // device tree
-    struct Nodes d_tree;
 	// n_pts is an int only to match CUB type definitions.
     int n_pts; // number of points
-    // Node* d_tree_internal;
-    // float* d_data_x;
-    // float* d_data_y;
-    // float* d_data_z;
-
 };
 
 }

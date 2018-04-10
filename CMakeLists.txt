@@ -1,20 +1,21 @@
 cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(shapes LANGUAGES CXX CUDA)
 
-file(GLOB shapes_sources ./src/*.cpp ./src/*.cu ./src/*.hpp ./src/*.cuh)
+file(GLOB shapes_sources ./src/*.cpp ./src/*.cu ./src/*.hpp)
 list(REMOVE_ITEM shapes_sources "main.cu")
 
 add_executable(shapes ${shapes_sources})
 target_include_directories(shapes PRIVATE libmorton)
 target_include_directories(shapes PRIVATE cub)
 
-# Request that shapes be built with -std=c++11
+# Request that shapes be built with -std=c++14
 # As this is a public compile feature anything that links to particles
-# will also build with -std=c++11
+# will also build with -std=c++14
 target_compile_features(shapes PUBLIC cxx_std_14)
 
 set_target_properties(shapes PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CUDA_FLAGS "-arch=sm_61 --expt-relaxed-constexpr")
+# Device debug info in debug mode
 set(CMAKE_CUDA_FLAGS_DEBUG "-g -G")
 
 # We need to explicitly state that we need all CUDA files in the 
