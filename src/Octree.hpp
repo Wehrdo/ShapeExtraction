@@ -2,6 +2,8 @@
 
 #include "RadixTree.hpp"
 
+namespace OT {
+
 typedef uint8_t edgeNodeCnt_t;
 class Octree {
 public:
@@ -14,3 +16,4 @@ private:
     // Number of octree nodes between a node and its parent
     edgeNodeCnt_t* d_edgeNodes;
 };
+}

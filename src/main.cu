@@ -11,7 +11,7 @@ int main() {
     auto cloud = KittiData::load("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin");
 
     RT::RadixTree radix_tree(cloud);
-    Octree octree(radix_tree);
+    OT::Octree octree(radix_tree);
 
     // cloud.saveAsPly("kitti0.ply");
 

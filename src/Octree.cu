@@ -4,12 +4,12 @@
 
 #include <type_traits>
 
-using namespace RT;
+using namespace OT;
 using cub::DeviceScan;
 
 __global__ void calcEdgeNodes(
-    const std::remove_pointer<decltype(Nodes::prefixN)>::type *prefixN,
-    const std::remove_pointer<decltype(Nodes::parent)>::type *parents,
+    const std::remove_pointer<decltype(RT::Nodes::prefixN)>::type *prefixN,
+    const std::remove_pointer<decltype(RT::Nodes::parent)>::type *parents,
     edgeNodeCnt_t *edgeNodes,
     const size_t N) {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -20,7 +20,7 @@ __global__ void calcEdgeNodes(
     }
 }
 
-Octree::Octree(const RadixTree& radix_tree) {
+Octree::Octree(const RT::RadixTree& radix_tree) {
     // Copy a "1" to the first element to account for the root
     
     CudaCheckCall(cudaMalloc(&d_edgeNodes, sizeof(*d_edgeNodes) * radix_tree.n_nodes));
