@@ -10,50 +10,122 @@ using cub::DeviceScan;
 __global__ void calcEdgeNodes(
     const std::remove_pointer<decltype(RT::Nodes::prefixN)>::type *prefixN,
     const std::remove_pointer<decltype(RT::Nodes::parent)>::type *parents,
-    edgeNodeCnt_t *edgeNodes,
+    int* edgeNodes,
     const size_t N) {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i > 0 && i < N-1) {
+    // root has no parent, so don't do for index 0
+    if (i > 0 && i < N) {
         int my_depth = prefixN[i] / 3;
         int parent_depth = prefixN[parents[i]] / 3;
         edgeNodes[i] = my_depth - parent_depth;
     }
 }
 
+__global__ void makeNodes(
+    const int* node_offsets,
+    const RT::Code_t* codes,
+    const int* rt_node_counts,
+    const uint8_t* prefixN,
+    const int* rt_parents,
+    OTNode* nodes,
+    const int N) {
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    // TODO: What to do with node 0?
+    if (i > 0 && i < N) {
+        int this_idx = node_offsets[i - 1];
+        int n_new_nodes = node_offsets[i] - node_offsets[i - 1];
+        int oct_idx = this_idx;
+        for (int j = 0; j < n_new_nodes - 1; ++j) {
+            // int out_idx = i + j; // TODO: optimize. can loop over indices directly
+            // int level = prefixN[i]/3 - (n_new_nodes - 1 - j);
+            // RT::Code_t node_prefix = codes[i] >> (RT::codeLen - (3 * level));
+            // if (j != 0) {
+            //     size_t parent_idx = out_idx - 1;
+            //     nodes[this_idx].parent = parent_idx;
+            //     size_t child_code = node_prefix & 0b111;
+            //     nodes[parent_idx].children[child_code] = out_idx;
+            // }
+
+
+            int level = prefixN[i]/3 - (n_new_nodes - 1 - j);
+            RT::Code_t node_prefix = codes[i] >> (RT::codeLen - (3 * level));
+            int child_idx = node_prefix & 0b111;
+            int parent = oct_idx + 1;
+            // nodes[parent].children[child_idx] = oct_idx;
+            // nodes[parent].child_mask |= 1 << child_idx;
+            nodes[parent].setChild(oct_idx, child_idx);
+            oct_idx = parent;
+        }
+        size_t rt_parent = rt_parents[i];
+        while (rt_node_counts[rt_parent] == 0) {
+            rt_parent = rt_parents[rt_parent];
+        }
+        size_t oct_parent = node_offsets[rt_parent];
+        int top_level = prefixN[i]/3;
+        RT::Code_t top_node_prefix = codes[i] >> (RT::codeLen - (3 * top_level));
+        int child_idx = top_node_prefix & 0b111;
+        nodes[oct_parent].setChild(oct_idx, child_idx);
+    }
+}
+
 Octree::Octree(const RT::RadixTree& radix_tree) {
     // Copy a "1" to the first element to account for the root
     
-    CudaCheckCall(cudaMalloc(&d_edgeNodes, sizeof(*d_edgeNodes) * radix_tree.n_nodes));
-    edgeNodeCnt_t edgeNode_1 = 1;
-    CudaCheckCall(cudaMemcpyAsync(d_edgeNodes, &edgeNode_1, sizeof(edgeNode_1), cudaMemcpyHostToDevice));
+    CudaCheckCall(cudaMallocManaged(&edgeNodes, sizeof(*edgeNodes) * radix_tree.n_nodes));
+    edgeNodes[0] = 1;
     int blocks, tpb;
     std::tie(blocks, tpb) = makeLaunchParams(radix_tree.n_nodes);
-    calcEdgeNodes<<<blocks, tpb>>>(radix_tree.d_tree.prefixN, radix_tree.d_tree.parent, d_edgeNodes, radix_tree.n_nodes);
+    calcEdgeNodes<<<blocks, tpb>>>(radix_tree.d_tree.prefixN, radix_tree.d_tree.parent, edgeNodes, radix_tree.n_nodes);
 	cudaDeviceSynchronize();
     CudaCheckError();
 
     // Inclusive prefix sum to find location of each octree node
-    edgeNodeCnt_t *oc_node_offsets;
-    CudaCheckCall(cudaMalloc(&oc_node_offsets, radix_tree.n_nodes * sizeof(*oc_node_offsets)));
+    int* oc_node_offsets;
+    CudaCheckCall(cudaMallocManaged(&oc_node_offsets, radix_tree.n_nodes * sizeof(*oc_node_offsets)));
 
     void* d_temp_storage = nullptr;
     size_t temp_storage_reqd = 0;
     CudaCheckCall(
         DeviceScan::InclusiveSum(d_temp_storage, temp_storage_reqd,
-                d_edgeNodes, oc_node_offsets,
+                edgeNodes, oc_node_offsets,
                 radix_tree.n_nodes)
     );
     CudaCheckCall(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_reqd));
     CudaCheckCall(
         DeviceScan::InclusiveSum(d_temp_storage, temp_storage_reqd,
-                d_edgeNodes, oc_node_offsets,
+                edgeNodes, oc_node_offsets,
                 radix_tree.n_nodes)
     );
 	cudaDeviceSynchronize();
     CudaCheckError();
     g_allocator.DeviceFree(d_temp_storage);
+
+    auto totalNodes = oc_node_offsets[radix_tree.n_nodes - 1];
+    printf("total nodes: %d\n", totalNodes);
+
+    CudaCheckCall(cudaMallocManaged(&nodes, radix_tree.n_nodes * sizeof(*nodes)));
+    CudaCheckCall(cudaMemset(nodes, 0, sizeof(*nodes) * radix_tree.n_nodes));
+
+    makeNodes<<<blocks, tpb>>>(oc_node_offsets,
+                               radix_tree.d_tree.mortonCode,
+                               edgeNodes,
+                               radix_tree.d_tree.prefixN,
+                               radix_tree.d_tree.parent,
+                               nodes,
+                               radix_tree.n_nodes);
+    cudaDeviceSynchronize();
+    CudaCheckError();
+
+    for (int i = 0; i < radix_tree.n_nodes; ++i) {
+        printf("Node %d:\n\tparent: %d\n\tchild_mask: %x\n\tchildren:\n", i, nodes[i].parent, nodes[i].child_mask);
+        for (int j = 0; j < 8; ++j) {
+            if (nodes[i].child_mask & (1 << j)) {
+                printf("\t\t%d: %d\n", j, nodes[i].children[j]);
+            }
+        }
+    }
 }
 
 Octree::~Octree() {
-    CudaCheckCall(cudaFree(d_edgeNodes));
+    CudaCheckCall(cudaFree(edgeNodes));
 }

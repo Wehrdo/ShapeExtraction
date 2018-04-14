@@ -33,7 +33,7 @@ __global__ void makeCodes(const T minCoord,
     if (idx < N) {
         T range = (maxCoord - minCoord);
         // We can only encode 21 bits (21 <bits> * 3 <dimensions> = 63 <bits>)
-        const uint32_t bitscale = 0xFFFFFFFFu >> (32 - 21);
+        const uint32_t bitscale = 0xFFFFFFFFu >> (32 - (codeLen / 3));
         uint32_t x_coord = bitscale * ((x_vals[idx] - minCoord) / range);
         uint32_t y_coord = bitscale * ((y_vals[idx] - minCoord) / range);
         uint32_t z_coord = bitscale * ((z_vals[idx] - minCoord) / range);
@@ -99,26 +99,25 @@ __device__ inline int_fast8_t delta(const Code_t a, const Code_t b) {
 __global__ void constructTree(const Code_t* codes,
                               bool* hasLeafLeft,
                               bool* hasLeafRight,
-                              size_t* leftChild,
-                              size_t* parent,
+                              int* leftChild,
+                              int* parent,
                               uint8_t* prefixN,
                               const size_t N) {
     assert(threadIdx.y == threadIdx.z == 1);
     assert(blockIdx.y == blockIdx.z == 1);
 
-    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N) {
         auto code_i = codes[i];
         // Determine direction of the range (+1 or -1)
-        // TODO: This will break when i = 0 or i = n-1
-        int_fast8_t d;
+        int d;
         if (i == 0) {
             d = 1;
         }
         else {
             auto delta_diff_right = delta(code_i, codes[i+1]);
             auto delta_diff_left = delta(code_i, codes[i-1]);
-            int_fast8_t direction_difference = delta_diff_right - delta_diff_left;
+            int direction_difference = delta_diff_right - delta_diff_left;
             d = (direction_difference > 0) - (direction_difference < 0);
         }
 
@@ -129,19 +128,16 @@ __global__ void constructTree(const Code_t* codes,
             // First node is root, covering whole tree
             l = N - 1;
         }
-        // else if (i == N - 1) {
-        //     l = 0;
-        // }
         else {
             auto delta_min = delta(code_i, codes[i - d]);
             Code_t l_max = 2;
             // Cast to ptrdiff_t so in case the result is negative (since d is +/- 1), we can catch it and not index out of bounds
-            while (static_cast<ptrdiff_t>(i) + static_cast<ptrdiff_t>(l_max)*d >= 0 &&
+            while (i + static_cast<ptrdiff_t>(l_max)*d >= 0 &&
                 i + l_max*d < N &&
                 delta(code_i, codes[i + l_max * d]) > delta_min) {
                 l_max *= 2;
             }
-            size_t t;
+            int t;
             int divisor;
             // Find the other end using binary search
             for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
@@ -150,12 +146,12 @@ __global__ void constructTree(const Code_t* codes,
                 }
             }
         }
-        size_t j = i + l*d;
+        int j = i + l*d;
         // Find the split position using binary search
         auto delta_node = delta(codes[i], codes[j]);
         prefixN[i] = delta_node;
-        size_t s = 0;
-        size_t t;
+        int s = 0;
+        int t;
         int max_divisor = 1 << log2_ceil(l);
         int divisor = 2;
         for (t = ceil_div<Code_t>(l, 2); divisor <= max_divisor; divisor <<= 1, t = ceil_div<Code_t>(l, divisor)) {
@@ -166,7 +162,7 @@ __global__ void constructTree(const Code_t* codes,
         }
 
         // Split position
-        size_t gamma = i + s*d + min(d, 0);
+        int gamma = i + s*d + min(d, 0);
         leftChild[i] = gamma;
         hasLeafLeft[i] = (min(i, j) == gamma);
         hasLeafRight[i] = (max(i, j) == gamma+1);
@@ -244,12 +240,12 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     assert(cloud.x_vals.size() <= std::numeric_limits<decltype(n_pts)>::max());
     n_pts = static_cast<decltype(n_pts)>(cloud.x_vals.size());
     // allocate memory for tree
-    CudaCheckCall(cudaMalloc(&d_tree.mortonCode, sizeof(*d_tree.mortonCode) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_tree.hasLeafLeft, sizeof(*d_tree.hasLeafRight) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_tree.hasLeafRight, sizeof(*d_tree.hasLeafRight) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_tree.prefixN, sizeof(*d_tree.prefixN) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_tree.leftChild, sizeof(*d_tree.leftChild) * n_pts));
-    CudaCheckCall(cudaMalloc(&d_tree.parent, sizeof(*d_tree.parent) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.mortonCode, sizeof(*d_tree.mortonCode) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.hasLeafLeft, sizeof(*d_tree.hasLeafRight) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.hasLeafRight, sizeof(*d_tree.hasLeafRight) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.prefixN, sizeof(*d_tree.prefixN) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.leftChild, sizeof(*d_tree.leftChild) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.parent, sizeof(*d_tree.parent) * n_pts));
 
     // fill up mortonCode in d_tree
     encodePoints(cloud);

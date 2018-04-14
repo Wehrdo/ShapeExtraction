@@ -14,6 +14,7 @@
 
 namespace RT {
 typedef uint64_t Code_t;
+constexpr int codeLen = 63;
 struct Nodes {
     // 63-bit morton code, packed to the right
     Code_t* mortonCode;
@@ -29,9 +30,9 @@ struct Nodes {
     
     // Index of left child of this node
     // Right child is leftChild + 1
-    size_t* leftChild;
+    int* leftChild;
     // Index of parent
-    size_t* parent;
+    int* parent;
 };
 
 class RadixTree {
