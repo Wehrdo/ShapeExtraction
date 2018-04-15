@@ -14,7 +14,14 @@ struct OTNode {
     //           If children[i] is -1, then child is absent
     int child_mask;
 
-    __device__ void setChild(size_t child, int my_child_idx);
+    // Set a child
+    //     child: index of octree node that will become the child
+    //     my_child_idx: which of my children it will be [0-7]
+    __device__ void setChild(const int child, const int my_child_idx);
+    // Set a leaf child
+    //     leaf: index of point that will become the leaf child
+    //     my_child_idx; which of my children it will be [0-7]
+    __device__ void setLeaf(const int leaf, const int my_child_idx);
 };
 
 class Octree {

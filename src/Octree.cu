@@ -7,10 +7,16 @@
 using namespace OT;
 using cub::DeviceScan;
 
-__device__ void OTNode::setChild(size_t child, int my_child_idx) {
+__device__ void OTNode::setChild(const int child, const int my_child_idx) {
     children[my_child_idx] = child;
+    // atomic version of child_mask |= (1 << my_child_idx);
     atomicOr(&child_mask, 1 << my_child_idx);
-    // child_mask |= (1 << my_child_idx);
+}
+
+__device__ void OTNode::setLeaf(const int leaf, const int my_child_idx) {
+    children[my_child_idx] = leaf;
+    // atomic version of child_mask &= ~(1 << my_child_idx);
+    atomicAnd(&child_mask, ~(1 << my_child_idx));
 }
 
 __global__ void calcEdgeNodes(
@@ -34,19 +40,56 @@ __global__ void initializeOTNodes(
     if (i < N) {
         nodes[i].child_mask = 0;
         #pragma unroll
-        for (int i = 0; i < 8; ++i) {
-            nodes[i].children[i] = -1;
+        for (int child = 0; child < 8; ++child) {
+            nodes[i].children[child] = -1;
         }
     }
 }
 
-__global__ void makeNodes(
-    const int* node_offsets,
-    const RT::Code_t* codes,
-    const int* rt_node_counts,
-    const uint8_t* prefixN,
-    const int* rt_parents,
+__global__ void linkLeafNodes(
     OTNode* nodes,
+    const int* node_offsets,
+    const int* rt_node_counts,
+    const RT::Code_t* codes,
+    const bool* rt_hasLeafLeft,
+    const bool* rt_hasLeafRight,
+    const uint8_t* rt_prefixN,
+    const int* rt_leftChild,
+    const int N) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        // int n_new_nodes = rt_node_counts[i];
+        // if (n_new_nodes > 0) {
+            // link leaves if possible
+            if (rt_hasLeafLeft[i]) {
+                int leaf_idx = rt_leftChild[i];
+                int leaf_level = rt_prefixN[i]/3 + 1;
+                RT::Code_t leaf_prefix = codes[leaf_idx] >> (RT::codeLen - (3 * leaf_level));
+                int child_idx = leaf_prefix & 0b111;
+                // link leaf to bottom octree node in string
+                int bottom_oct = node_offsets[i];
+                nodes[bottom_oct].setLeaf(leaf_idx, child_idx);
+            }
+            if (rt_hasLeafRight[i]) {
+                int leaf_idx = rt_leftChild[i] + 1;
+                int leaf_level = rt_prefixN[i]/3 + 1;
+                RT::Code_t leaf_prefix = codes[leaf_idx] >> (RT::codeLen - (3 * leaf_level));
+                int child_idx = leaf_prefix & 0b111;
+                int bottom_oct = node_offsets[i];
+                nodes[bottom_oct].setLeaf(leaf_idx, child_idx);
+            }
+        // }
+    }
+
+}
+
+__global__ void makeNodes(
+    OTNode* nodes,
+    const int* node_offsets,
+    const int* rt_node_counts,
+    const RT::Code_t* codes,
+    const uint8_t* rt_prefixN,
+    const int* rt_parents,
     const int N) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     // TODO: What to do with node 0?
@@ -55,24 +98,10 @@ __global__ void makeNodes(
         // int n_new_nodes = node_offsets[i] - node_offsets[i - 1];
         int n_new_nodes = rt_node_counts[i];
         for (int j = 0; j < n_new_nodes - 1; ++j) {
-            // int out_idx = i + j; // TODO: optimize. can loop over indices directly
-            // int level = prefixN[i]/3 - (n_new_nodes - 1 - j);
-            // RT::Code_t node_prefix = codes[i] >> (RT::codeLen - (3 * level));
-            // if (j != 0) {
-            //     size_t parent_idx = out_idx - 1;
-            //     nodes[this_idx].parent = parent_idx;
-            //     size_t child_code = node_prefix & 0b111;
-            //     nodes[parent_idx].children[child_code] = out_idx;
-            // }
-
-
-            // int level = prefixN[i]/3 - (n_new_nodes - 1 - j);
-            int level = prefixN[i]/3 - j;
+            int level = rt_prefixN[i]/3 - j;
             RT::Code_t node_prefix = codes[i] >> (RT::codeLen - (3 * level));
             int child_idx = node_prefix & 0b111;
             int parent = oct_idx + 1;
-            // nodes[parent].children[child_idx] = oct_idx;
-            // nodes[parent].child_mask |= 1 << child_idx;
             nodes[parent].setChild(oct_idx, child_idx);
             oct_idx = parent;
         }
@@ -82,8 +111,7 @@ __global__ void makeNodes(
                 rt_parent = rt_parents[rt_parent];
             }
             int oct_parent = node_offsets[rt_parent];
-            // int top_level = prefixN[i]/3;
-            int top_level = prefixN[i]/3 - n_new_nodes + 1;
+            int top_level = rt_prefixN[i]/3 - n_new_nodes + 1;
             RT::Code_t top_node_prefix = codes[i] >> (RT::codeLen - (3 * top_level));
             int child_idx = top_node_prefix & 0b111;
             nodes[oct_parent].setChild(oct_idx, child_idx);
@@ -132,13 +160,23 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     // setup initial values of octree node objects
     initializeOTNodes<<<blocks, tpb>>>(nodes, totalNodes);
 
-    makeNodes<<<blocks, tpb>>>(oc_node_offsets,
-                               radix_tree.d_tree.mortonCode,
+    makeNodes<<<blocks, tpb>>>(nodes,
+                               oc_node_offsets,
                                edgeNodes,
+                               radix_tree.d_tree.mortonCode,
                                radix_tree.d_tree.prefixN,
                                radix_tree.d_tree.parent,
-                               nodes,
                                radix_tree.n_nodes);
+
+    linkLeafNodes<<<blocks, tpb>>>(nodes,
+                                   oc_node_offsets,
+                                   edgeNodes,
+                                   radix_tree.d_tree.mortonCode,
+                                   radix_tree.d_tree.hasLeafLeft,
+                                   radix_tree.d_tree.hasLeafRight,
+                                   radix_tree.d_tree.prefixN,
+                                   radix_tree.d_tree.leftChild,
+                                   radix_tree.n_nodes);
     cudaDeviceSynchronize();
     CudaCheckError();
 
@@ -147,6 +185,9 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
         for (int j = 0; j < 8; ++j) {
             if (nodes[i].child_mask & (1 << j)) {
                 printf("\t\t%d: %d\n", j, nodes[i].children[j]);
+            }
+            else if (nodes[i].children[j] != -1) {
+                printf("\t\tLeaf %d: %d\n", j, nodes[i].children[j]);
             }
         }
     }
