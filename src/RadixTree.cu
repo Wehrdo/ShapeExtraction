@@ -37,6 +37,9 @@ __global__ void makeCodes(const T minCoord,
         uint32_t x_coord = bitscale * ((x_vals[idx] - minCoord) / range);
         uint32_t y_coord = bitscale * ((y_vals[idx] - minCoord) / range);
         uint32_t z_coord = bitscale * ((z_vals[idx] - minCoord) / range);
+        printf("Raw pont %d = (%f, %f, %f)\n", idx, x_vals[idx], y_vals[idx], z_vals[idx]);
+        printf("Point %lu = (%u, %u, %u)\n", (unsigned long)idx, (unsigned int)x_coord, (unsigned int)y_coord, (unsigned int)z_coord);
+        // std::cout << "Point " << idx << " = (" << x_coord << ", " << y_coord << ", " << z_coord << std::endl;
         codes[idx] = morton3D_64_encode(x_coord, y_coord, z_coord);
         // if (idx == 0) {
         //     // printf("min = %f, max = %f\n", minCoord, maxCoord);
@@ -192,10 +195,13 @@ void RadixTree::encodePoints(const PointCloud<float>& cloud) {
     cudaDeviceSynchronize();
 
     // Find maximum and minumum values in data
-    std::array<float, 3> mins, maxes;
-    float *d_mins, *d_maxes;
-    CudaCheckCall(g_allocator.DeviceAllocate((void**)&d_mins, sizeof(float) * 3));
-    CudaCheckCall(g_allocator.DeviceAllocate((void**)&d_maxes, sizeof(float) * 3));
+    // std::array<float, 3> mins, maxes;
+    float *mins, *maxes;
+    CudaCheckCall(cudaMallocManaged(&mins, sizeof(float) * 3));
+    CudaCheckCall(cudaMallocManaged(&maxes, sizeof(float) * 3));
+    // float *d_mins, *d_maxes;
+    // CudaCheckCall(g_allocator.DeviceAllocate((void**)&d_mins, sizeof(float) * 3));
+    // CudaCheckCall(g_allocator.DeviceAllocate((void**)&d_maxes, sizeof(float) * 3));
 
     size_t temp_storage_reqd = 0;
     void* d_temp_storage = nullptr;
@@ -204,23 +210,23 @@ void RadixTree::encodePoints(const PointCloud<float>& cloud) {
     // allocate temporary storage
     CudaCheckCall(g_allocator.DeviceAllocate((void**)&d_temp_storage,  temp_storage_reqd));
     // Find maximum
-    DeviceReduce::Max(d_temp_storage, temp_storage_reqd, d_data_x, &d_maxes[0], n_pts);
-    DeviceReduce::Max(d_temp_storage, temp_storage_reqd, d_data_y, &d_maxes[1], n_pts);
-    DeviceReduce::Max(d_temp_storage, temp_storage_reqd, d_data_z, &d_maxes[2], n_pts);
-    DeviceReduce::Min(d_temp_storage, temp_storage_reqd, d_data_x, &d_mins[0], n_pts);
-    DeviceReduce::Min(d_temp_storage, temp_storage_reqd, d_data_y, &d_mins[1], n_pts);
-    DeviceReduce::Min(d_temp_storage, temp_storage_reqd, d_data_z, &d_mins[2], n_pts);
+    DeviceReduce::Max(d_temp_storage, temp_storage_reqd, d_data_x, &maxes[0], n_pts);
+    DeviceReduce::Max(d_temp_storage, temp_storage_reqd, d_data_y, &maxes[1], n_pts);
+    DeviceReduce::Max(d_temp_storage, temp_storage_reqd, d_data_z, &maxes[2], n_pts);
+    DeviceReduce::Min(d_temp_storage, temp_storage_reqd, d_data_x, &mins[0], n_pts);
+    DeviceReduce::Min(d_temp_storage, temp_storage_reqd, d_data_y, &mins[1], n_pts);
+    DeviceReduce::Min(d_temp_storage, temp_storage_reqd, d_data_z, &mins[2], n_pts);
     cudaDeviceSynchronize();
     CudaCheckError();
 
-    cudaMemcpy(&mins[0], d_mins, sizeof(float) * mins.size(), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&maxes[0], d_maxes, sizeof(float) * maxes.size(), cudaMemcpyDeviceToHost);
-    g_allocator.DeviceFree(d_mins);
-    g_allocator.DeviceFree(d_maxes);
+    // cudaMemcpy(&mins[0], d_mins, sizeof(float) * mins.size(), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(&maxes[0], d_maxes, sizeof(float) * maxes.size(), cudaMemcpyDeviceToHost);
+    // g_allocator.DeviceFree(d_mins);
+    // g_allocator.DeviceFree(d_maxes);
     g_allocator.DeviceFree(d_temp_storage);
     cudaDeviceSynchronize();
-    float max_val = *std::max_element(maxes.begin(), maxes.end());
-    float min_val = *std::min_element(mins.begin(), mins.end());
+    float max_val = *std::max_element(&maxes[0], &maxes[3]);
+    float min_val = *std::min_element(&mins[0], &mins[3]);
     // std::cout << "range = [" << min_val << ", " << max_val << "]" << std::endl;
 
     int blocks, tpb;
@@ -253,7 +259,7 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     // Sort in ascending order
     // Just the Morton codes from the nodes
     Code_t* d_codes_sorted;
-    CudaCheckCall(cudaMalloc(&d_codes_sorted, sizeof(*d_codes_sorted) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_codes_sorted, sizeof(*d_codes_sorted) * n_pts));
     void* d_temp_storage = nullptr;
     size_t temp_storage_reqd = 0;
     CudaCheckCall(
@@ -303,11 +309,11 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     // CudaCheckCall(cudaMemcpy(h_codes, d_tree.mortonCode, sizeof(*h_codes) * n_pts, cudaMemcpyDeviceToHost));
     // CudaCheckCall(cudaMemcpy(h_leftChild, d_tree.leftChild, sizeof(*h_leftChild) * n_pts, cudaMemcpyDeviceToHost));
     // CudaCheckCall(cudaMemcpy(h_parent, d_tree.parent, sizeof(*h_parent) * n_pts, cudaMemcpyDeviceToHost));
-    // for (int i = 0; i < n_pts; ++i) {
-    //     // std::cout << std::hex << h_tree[i].mortonCode << ", left = " << h_tree[i].leftChild << ",parent = " << h_tree[i].parent << std::endl;
-    //     printf("idx = %d, code = %llx, left = %d, parent = %d\n",
-    //             i, h_codes[i], h_leftChild[i], h_parent[i]);
-    // }
+    for (int i = 0; i < n_nodes; ++i) {
+        // std::cout << std::hex << h_tree[i].mortonCode << ", left = " << h_tree[i].leftChild << ",parent = " << h_tree[i].parent << std::endl;
+        printf("idx = %d, code = %llx, prefixN = %d, left = %d, parent = %d, leftLeaf=%d, rightLeft=%d\n",
+                i, d_tree.mortonCode[i], (int)d_tree.prefixN[i], d_tree.leftChild[i], d_tree.parent[i], (int)d_tree.hasLeafLeft[i], (int)d_tree.hasLeafRight[i]);
+    }
 }
 
 RadixTree::~RadixTree() {

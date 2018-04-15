@@ -19,8 +19,7 @@ struct Nodes {
     // 63-bit morton code, packed to the right
     Code_t* mortonCode;
 
-    // Flag determining whether this is a leaf node or not
-    // TODO: Store "leaf" flag in first bit of mortonCode
+    // Flags determining whether the left and right children are leaves
     bool* hasLeafLeft;
     bool* hasLeafRight;
 
