@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PointCloud.hpp"
+#include "MortonUtils.hpp"
 #include <cuda_runtime_api.h>
 #include <cuda.h>
 #include "cub/util_allocator.cuh"
@@ -13,8 +14,6 @@
  */
 
 namespace RT {
-typedef uint64_t Code_t;
-constexpr int codeLen = 63;
 struct Nodes {
     // 63-bit morton code, packed to the right
     Code_t* mortonCode;
@@ -40,17 +39,21 @@ public:
     ~RadixTree();
     // radix tree on GPU
     struct Nodes d_tree;
-    // Number of tree nodes
+	// n_pts is an int only to match CUB type definitions.
+    int n_pts; // number of points
+
+    // Number of tree nodes (n_pts - 1)
     int n_nodes;
+
+    // minimum and maximum coordinate in points.
+    // Represents the scaling factor for the morton codes
+    float min_coord, max_coord;
 private:
     // Encodes point cloud into mortonCode array of d_tree
     void encodePoints(const PointCloud<float>& cloud);
 
     // caching device allocator for CUB temporary storage
     cub::CachingDeviceAllocator g_allocator;
-
-	// n_pts is an int only to match CUB type definitions.
-    int n_pts; // number of points
 };
 
 }

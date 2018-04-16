@@ -1,6 +1,5 @@
 #include "RadixTree.hpp"
 #include "CudaCommon.hpp"
-#include "libmorton/include/morton.h"
 #include "cub/device/device_reduce.cuh"
 #include "cub/device/device_radix_sort.cuh"
 
@@ -18,53 +17,23 @@ using cub::DeviceReduce;
 using cub::DeviceRadixSort;
 
 template <typename T>
-__global__ void makeCodes(const T minCoord,
-                          const T maxCoord,
-                          const T* __restrict__ x_vals,
-                          const T* __restrict__ y_vals,
-                          const T* __restrict__ z_vals,
-                          Code_t* codes,
-                          const size_t N) {
+__global__ void makeCodes(
+    const T min_coord,
+    const T range,
+    const T* __restrict__ x_vals,
+    const T* __restrict__ y_vals,
+    const T* __restrict__ z_vals,
+    Code_t* codes,
+    const size_t N) {
     // only supports 1-dimension blocks and grids
     assert(threadIdx.y == threadIdx.z == 1);
     assert(blockIdx.y == blockIdx.z == 1);
 
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
-        T range = (maxCoord - minCoord);
-        // We can only encode 21 bits (21 <bits> * 3 <dimensions> = 63 <bits>)
-        const uint32_t bitscale = 0xFFFFFFFFu >> (32 - (codeLen / 3));
-        uint32_t x_coord = bitscale * ((x_vals[idx] - minCoord) / range);
-        uint32_t y_coord = bitscale * ((y_vals[idx] - minCoord) / range);
-        uint32_t z_coord = bitscale * ((z_vals[idx] - minCoord) / range);
-        printf("Raw pont %d = (%f, %f, %f)\n", idx, x_vals[idx], y_vals[idx], z_vals[idx]);
-        printf("Point %lu = (%u, %u, %u)\n", (unsigned long)idx, (unsigned int)x_coord, (unsigned int)y_coord, (unsigned int)z_coord);
-        // std::cout << "Point " << idx << " = (" << x_coord << ", " << y_coord << ", " << z_coord << std::endl;
-        codes[idx] = morton3D_64_encode(x_coord, y_coord, z_coord);
-        // if (idx == 0) {
-        //     // printf("min = %f, max = %f\n", minCoord, maxCoord);
-        //     printf("%u, %u, %u\n", x_coord, y_coord, z_coord);
-        //     printf("%f, %f, %f = %x\n", x_vals[idx], y_vals[idx], z_vals[idx], nodes[idx].mortonCode);
-
-        //     uint_fast32_t dec_raw_x, dec_raw_y, dec_raw_z;
-        //     morton3D_64_decode(nodes[idx].mortonCode, dec_raw_x, dec_raw_y, dec_raw_z);
-        //     float dec_x = ((float)dec_raw_x / bitscale) * range + minCoord;
-        //     float dec_y = ((float)dec_raw_y / bitscale) * range + minCoord;
-        //     float dec_z = ((float)dec_raw_z / bitscale) * range + minCoord;
-        //     printf("decoded = %f, %f, %f\n", dec_x, dec_y, dec_z);
-        // }
+        codes[idx] = pointToCode(x_vals[idx], y_vals[idx], z_vals[idx], min_coord, range);
     }
 }
-
-// __global__ void fillCodes(const Node* nodes, Code_t* codes, const size_t N) {
-//     assert(threadIdx.y == threadIdx.z == 1);
-//     assert(blockIdx.y == blockIdx.z == 1);
-
-//     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-//     if (idx < N) {
-//         codes[idx] = nodes[idx].mortonCode;
-//     }
-// }
 
 // computes ceil(a / b)
 template<typename T>
@@ -99,13 +68,14 @@ __device__ inline int_fast8_t delta(const Code_t a, const Code_t b) {
     return __clzll(a ^ b) - 1;
 }
 
-__global__ void constructTree(const Code_t* codes,
-                              bool* hasLeafLeft,
-                              bool* hasLeafRight,
-                              int* leftChild,
-                              int* parent,
-                              uint8_t* prefixN,
-                              const size_t N) {
+__global__ void constructTree(
+    const Code_t* codes,
+    bool* hasLeafLeft,
+    bool* hasLeafRight,
+    int* leftChild,
+    int* parent,
+    uint8_t* prefixN,
+    const size_t N) {
     assert(threadIdx.y == threadIdx.z == 1);
     assert(blockIdx.y == blockIdx.z == 1);
 
@@ -225,13 +195,13 @@ void RadixTree::encodePoints(const PointCloud<float>& cloud) {
     // g_allocator.DeviceFree(d_maxes);
     g_allocator.DeviceFree(d_temp_storage);
     cudaDeviceSynchronize();
-    float max_val = *std::max_element(&maxes[0], &maxes[3]);
-    float min_val = *std::min_element(&mins[0], &mins[3]);
+    max_coord = *std::max_element(&maxes[0], &maxes[3]);
+    min_coord = *std::min_element(&mins[0], &mins[3]);
     // std::cout << "range = [" << min_val << ", " << max_val << "]" << std::endl;
 
     int blocks, tpb;
     std::tie(blocks, tpb) = makeLaunchParams(n_pts);
-    makeCodes<<<blocks, tpb>>>(min_val, max_val, d_data_x, d_data_y, d_data_z, d_tree.mortonCode, n_pts);
+    makeCodes<<<blocks, tpb>>>(min_coord, max_coord - min_coord, d_data_x, d_data_y, d_data_z, d_tree.mortonCode, n_pts);
     cudaDeviceSynchronize();
     CudaCheckError();
 
@@ -299,18 +269,7 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 	cudaDeviceSynchronize();
     CudaCheckError();
 
-    // Code_t* h_codes = new Code_t[n_pts]();
-    // CudaCheckCall(cudaMemcpy(h_codes, d_tree.mortonCode, sizeof(Code_t) * n_pts, cudaMemcpyDeviceToHost));
-    // //auto h_leftChild = d_tree.mortonCode;
-    // //auto h_parent = d_tree.parent;
-    // auto h_leftChild = new std::remove_pointer<decltype(d_tree.leftChild)>::type[n_pts];
-    // auto h_parent = new std::remove_pointer<decltype(d_tree.parent)>::type[n_pts];
-    // //Code_t* h_leftChild = new std::remove_pointer<decltype(d_tree.mortonCode)>::type[n_pts]();
-    // CudaCheckCall(cudaMemcpy(h_codes, d_tree.mortonCode, sizeof(*h_codes) * n_pts, cudaMemcpyDeviceToHost));
-    // CudaCheckCall(cudaMemcpy(h_leftChild, d_tree.leftChild, sizeof(*h_leftChild) * n_pts, cudaMemcpyDeviceToHost));
-    // CudaCheckCall(cudaMemcpy(h_parent, d_tree.parent, sizeof(*h_parent) * n_pts, cudaMemcpyDeviceToHost));
     for (int i = 0; i < n_nodes; ++i) {
-        // std::cout << std::hex << h_tree[i].mortonCode << ", left = " << h_tree[i].leftChild << ",parent = " << h_tree[i].parent << std::endl;
         printf("idx = %d, code = %llx, prefixN = %d, left = %d, parent = %d, leftLeaf=%d, rightLeft=%d\n",
                 i, d_tree.mortonCode[i], (int)d_tree.prefixN[i], d_tree.leftChild[i], d_tree.parent[i], (int)d_tree.hasLeafLeft[i], (int)d_tree.hasLeafRight[i]);
     }

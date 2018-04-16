@@ -5,6 +5,19 @@
 #include <fstream>
 #include <cassert>
 
+
+#ifdef __CUDACC__
+#define POINT_CONST_PREFIX __host__ __device__
+#else
+#define POINT_CONST_PREFIX
+#endif
+
+
+struct Point {
+    POINT_CONST_PREFIX Point(float x, float y, float z) : x(x), y(y), z(z) {}
+    float x, y, z;
+};
+
 template <typename T>
 class PointCloud {
 public:

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RadixTree.hpp"
+#include "PointCloud.hpp"
 
 namespace OT {
 
@@ -8,11 +9,16 @@ struct OTNode {
     int parent;
     // TODO: This is overkill number of pointers
     int children[8];
+
+
     // For bit position i (from the right):
     //     If 1, children[i] is the index of a child octree node
     //     If 0, the ith child is either absent, or children[i] is the index of a leaf.
-    //           If children[i] is -1, then child is absent
-    int child_mask;
+    int child_node_mask;
+    // For bit position i (from the right):
+    //     If 1, children[i] is the index of a leaf (in the corresponding points array)
+    //     If 0, the ith child is either absent, or an octree node.
+    int child_leaf_mask;
 
     // Set a child
     //     child: index of octree node that will become the child
@@ -28,15 +34,20 @@ class Octree {
 public:
     Octree(const RT::RadixTree& radix_tree);
     ~Octree();
+    template <int k>
+    std::vector<std::array<int, k>> knnSearch(const std::vector<Point>& points);
 private:
     // caching device allocator for CUB temporary storage
     cub::CachingDeviceAllocator g_allocator;
 
-    // Number of octree nodes between a node and its parent
-    int* edgeNodes;
-
+    // the octree
     OTNode* nodes;
+
+    // points, as points converted back from morton codes (in unified memory)
+    Point* u_points;
+    // points in host memory
+    Point* h_points;
     // prefix for the root node
-    RT::Code_t root_prefix;
+    Code_t root_prefix;
 };
 }
