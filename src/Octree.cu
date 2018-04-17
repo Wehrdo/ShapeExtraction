@@ -125,7 +125,7 @@ __global__ void makeNodes(
             // calculate corner point
             //   (less significant bits have already been shifted off)
             nodes[oct_idx].corner = codeToPoint(node_prefix << (CODE_LEN - (3 * level)), min_coord, range);
-            // each cell is half the size of 
+            // each cell is half the size of the level above it
             nodes[oct_idx].cell_size = range / static_cast<float>(1 << (level - root_level));
             oct_idx = parent;
         }
@@ -190,6 +190,11 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     // std::tie(blocks, tpb) = makeLaunchParams(n_oct_nodes);
     // initializeOTNodes<<<blocks, tpb>>>(nodes, n_oct_nodes);
 
+    float tree_range = radix_tree.max_coord - radix_tree.min_coord;
+    int root_level = radix_tree.d_tree.prefixN[0]/3;
+    Code_t root_prefix = radix_tree.d_tree.mortonCode[0] >> (CODE_LEN - (3 * root_level));
+    nodes[0].corner = codeToPoint(root_prefix << (CODE_LEN - (3 * root_level)), radix_tree.min_coord, tree_range);
+    nodes[0].cell_size = tree_range;
     std::tie(blocks, tpb) = makeLaunchParams(radix_tree.n_nodes);
     makeNodes<<<blocks, tpb>>>(nodes,
                                oc_node_offsets,
@@ -198,7 +203,7 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
                                radix_tree.d_tree.prefixN,
                                radix_tree.d_tree.parent,
                                radix_tree.min_coord,
-                               radix_tree.max_coord - radix_tree.min_coord,
+                               tree_range,
                                radix_tree.n_nodes);
 
     linkLeafNodes<<<blocks, tpb>>>(nodes,
@@ -275,28 +280,30 @@ __device__ std::tuple<int, float> OT::nodePointDistance(
     return std::make_tuple(best_pt_idx, nearest_dist2);
 }
 
+// returns the closest possible distance between query_pt and any potential point in node
 __device__ float OT::nodeBoxDistance(
     const Point& query_pt,
-    const OTNode& node,
-    const Point* points) {
-    // if node has a point as a child (leaf children)
-    // if (node.child_leaf_mask) {
-    //     return std::get<1>(nodePointDistance(query_pt, node, points));
-    // }
-    // no children, so use nearest corner on node bounding box
-    // else {
-        // boundaries of octree cell
-        float x_bounds1 = node.corner.x;
-        float x_bounds2 = node.corner.x + node.cell_size;
-        float y_bounds1 = node.corner.y;
-        float y_bounds2 = node.corner.y + node.cell_size;
-        float z_bounds1 = node.corner.z;
-        float z_bounds2 = node.corner.z + node.cell_size;
-        // minimum distance to boundaries in each dimension
-        float min_x = fminf(fabsf(query_pt.x - x_bounds1), fabsf(query_pt.x - x_bounds2));
-        float min_y = fminf(fabsf(query_pt.y - y_bounds1), fabsf(query_pt.y - y_bounds2));
-        float min_z = fminf(fabsf(query_pt.z - z_bounds1), fabsf(query_pt.z - z_bounds2));
-        // total distance to nearest corner
-        return min_x*min_x + min_y*min_y + min_z*min_z;
-    // }
+    const OTNode& node) {
+    // boundaries of octree cell
+    float x_bounds1 = node.corner.x;
+    float x_bounds2 = node.corner.x + node.cell_size;
+    float y_bounds1 = node.corner.y;
+    float y_bounds2 = node.corner.y + node.cell_size;
+    float z_bounds1 = node.corner.z;
+    float z_bounds2 = node.corner.z + node.cell_size;
+    bool contained = query_pt.x > x_bounds1 && query_pt.x < x_bounds2 &&
+                        query_pt.y > y_bounds1 && query_pt.y < y_bounds2 &&
+                        query_pt.z > z_bounds1 && query_pt.z < z_bounds2;
+    // If point contained, then nearest possible distance is 0
+    if (contained) {
+        return 0;
+    }
+    // otherwise, minimum is minimum to each border
+    float min_dist = fabsf(query_pt.x - x_bounds1);
+    min_dist = fminf(min_dist, fabsf(query_pt.x - x_bounds2));
+    min_dist = fminf(min_dist, fabsf(query_pt.y - y_bounds1));
+    min_dist = fminf(min_dist, fabsf(query_pt.y - y_bounds2));
+    min_dist = fminf(min_dist, fabsf(query_pt.z - z_bounds1));
+    min_dist = fminf(min_dist, fabsf(query_pt.z - z_bounds2));
+    return min_dist;        
 }

@@ -4,7 +4,7 @@
 
 #include <cuda.h>
 
-__device__ Code_t pointToCode(
+__host__ __device__ Code_t pointToCode(
     const float x,
     const float y,
     const float z,
@@ -18,7 +18,7 @@ __device__ Code_t pointToCode(
     return morton3D_64_encode(x_coord, y_coord, z_coord);
 }
 
-__device__ Point codeToPoint(const Code_t code, const float min_coord, const float range) {
+__host__ __device__ Point codeToPoint(const Code_t code, const float min_coord, const float range) {
         const uint32_t bitscale = 0xFFFFFFFFu >> (32 - (CODE_LEN / 3));
         uint32_t dec_raw_x, dec_raw_y, dec_raw_z;
         morton3D_64_decode(code, dec_raw_x, dec_raw_y, dec_raw_z);

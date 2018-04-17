@@ -69,8 +69,7 @@ private:
 // pre-declarations of functions for kernel
 __device__ float nodeBoxDistance(
     const Point& query_pt,
-    const OTNode& node,
-    const Point* points);
+    const OTNode& node);
 __device__ std::tuple<int, float> nodePointDistance(
     const Point& query_pt,
     const OTNode& node,
@@ -96,7 +95,7 @@ __global__ void knnSearchKernel(
         float r = 0;
         // best distance so far
         float d = INFINITY;
-        while (d >= (1 + eps) * r) {
+        while (d >= (1 + eps) * r && queue.size) {
             auto queue_top = queue.removeMin();
             const OTNode& node = *queue_top.data;
             r = queue_top.priority;
@@ -114,8 +113,9 @@ __global__ void knnSearchKernel(
             // now add all non-leaf children of this node, with priority as their closest possible distance
             for (int i = 0; i < 8; ++i) {
                 if (node.child_node_mask & (1 << i)) {
-                    queue.insert(&octree[node.children[i]],
-                                 nodeBoxDistance(query, node, all_pts));
+                    const OTNode& candidate_node = octree[node.children[i]];
+                    queue.insert(&candidate_node,
+                                 nodeBoxDistance(query, candidate_node));
                 }
             }
         }
