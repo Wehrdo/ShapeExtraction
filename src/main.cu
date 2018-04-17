@@ -20,10 +20,13 @@ int main() {
         Point(50.583, 1.29, 1.92)
     });
 
-    auto results = octree.knnSearch<1>(search_pts);
+    auto results = octree.knnSearch<2>(search_pts);
     for (const auto& pt_idxs : results) {
-        const Point& pt = octree.h_points[pt_idxs[0]];
-        std::cout << pt.x << ", " << pt.y << ", " << pt.z << std::endl;
+        for (int pt_idx : pt_idxs) {
+            const Point& pt = octree.h_points[pt_idx];
+            std::cout << pt.x << ", " << pt.y << ", " << pt.z << std::endl;
+        }
+        std::cout << std::endl;
     }
 
     // cloud.saveAsPly("kitti0.ply");

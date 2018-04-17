@@ -14,7 +14,6 @@ namespace OT {
 constexpr static int SEARCH_Q_SIZE = 32;
 
 struct OTNode {
-    int parent;
     // TODO: This is overkill number of pointers
     int children[8];
 
@@ -85,43 +84,46 @@ __global__ void knnSearchKernel(
     const int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
-        int k_found = 0;
-        int best_pt = -1;
         const Point query = query_pts[idx];
-        PriorityQueue<OTNode, SEARCH_Q_SIZE> queue;
+        PriorityQueue<const OTNode*, SEARCH_Q_SIZE> search_q;
+        PriorityQueue<int, k> result_q;
         // start with root in queue
-        queue.insert(octree, 0);
+        search_q.insert(octree, 0);
         // distance explored so far
         float r = 0;
         // best distance so far
         float d = INFINITY;
-        while (d >= (1 + eps) * r && queue.size) {
-            auto queue_top = queue.removeMin();
+        while (d >= (1 + eps) * r && search_q.size) {
+            auto queue_top = search_q.removeMin();
             const OTNode& node = *queue_top.data;
             r = queue_top.priority;
             // if this cell contains a point that's better than best found so far, choose it
             if (node.child_leaf_mask) {
-                // TODO: Check all contained points for knn
-                //       Idea: Make a PriorityQueue of size k, and try to add all contained points
-                auto close_pt = nodePointDistance(query, node, all_pts);
-                float candidate_dist = std::get<1>(close_pt);
-                if (candidate_dist < d) {
-                    best_pt = std::get<0>(close_pt);
-                    d = candidate_dist;
+                #pragma unroll
+                for (int i = 0; i < 8; ++i) {
+                    if (node.child_leaf_mask & (1 << i)) {
+                        const Point& leaf_pt = all_pts[node.children[i]];
+                        const float p_dist2 = Point::distance2(query, leaf_pt);
+                        result_q.insert(node.children[i], p_dist2);
+                    }
                 }
             }
             // now add all non-leaf children of this node, with priority as their closest possible distance
+            #pragma unroll
             for (int i = 0; i < 8; ++i) {
                 if (node.child_node_mask & (1 << i)) {
                     const OTNode& candidate_node = octree[node.children[i]];
-                    queue.insert(&candidate_node,
+                    search_q.insert(&candidate_node,
                                  nodeBoxDistance(query, candidate_node));
                 }
             }
         }
 
-        result_pts[idx * k] = best_pt;
-
+        #pragma unroll
+        for (int i = 0; i < k; ++i) {
+            auto top_result = result_q.removeMin();
+            result_pts[idx*k + i] = top_result.data;
+        }
     }
 }
 

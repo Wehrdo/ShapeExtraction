@@ -31,7 +31,7 @@ __global__ void makeCodes(
 
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
-        printf("Raw point %d = (%f, %f, %f)\n", idx, x_vals[idx], y_vals[idx], z_vals[idx]);
+        // printf("Raw point %d = (%f, %f, %f)\n", idx, x_vals[idx], y_vals[idx], z_vals[idx]);
         codes[idx] = pointToCode(x_vals[idx], y_vals[idx], z_vals[idx], min_coord, range);
     }
 }
@@ -112,7 +112,9 @@ __global__ void constructTree(
             int divisor;
             // Find the other end using binary search
             for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
-                if (delta(code_i, codes[i + (l + t)*d]) > delta_min) {
+                if (i + (l + t)*d >= 0 &&
+                    i + (l + t)*d < N &&
+                    delta(code_i, codes[i + (l + t)*d]) > delta_min) {
                     l += t;
                 }
             }

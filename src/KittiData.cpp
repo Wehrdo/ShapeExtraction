@@ -12,7 +12,7 @@ PointCloud<float> KittiData::load(std::string filepath) {
 
     auto stream = std::fopen(filepath.c_str(), "rb");
     num = fread(data.get(), sizeof(float), num, stream) / 4;
-    num = 10;
+    // num = 10;
     float* px = data.get() + 0;
     float* py = data.get() + 1;
     float* pz = data.get() + 2;

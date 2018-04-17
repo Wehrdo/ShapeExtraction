@@ -5,7 +5,7 @@
 template <typename T>
 class Q_Node {
 public:
-    const T* data;
+    T data;
     float priority;
 };
 
@@ -35,7 +35,7 @@ public:
     int size;
     __host__ __device__ PriorityQueue(): size(0) {}
     // Inserts a new item into the queue
-    __host__ __device__ void insert(const T* node, float weight);
+    __host__ __device__ void insert(const T node, float weight);
     // Returns and removes the item with lowest value
     __host__ __device__ Q_Node<T> removeMin();
     // Returns and removes the item with highest value
@@ -53,7 +53,7 @@ public:
 __host__ __device__ int int_log2(int x);
 
 template <typename T, int MAX_Q>
-__host__ __device__ void PriorityQueue<T, MAX_Q>::insert(const T* node_data, float weight) {
+__host__ __device__ void PriorityQueue<T, MAX_Q>::insert(const T node_data, float weight) {
     //assert(size < MAX_Q); // Must not overfill array
     //Q_Node newN = { node, weight };
 
