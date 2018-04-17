@@ -2,6 +2,7 @@
 #include "CudaCommon.hpp"
 #include "cub/device/device_reduce.cuh"
 #include "cub/device/device_radix_sort.cuh"
+#include "cub/device/device_scan.cuh"
 
 #include <memory>
 #include <array>
@@ -15,6 +16,7 @@
 using namespace RT;
 using cub::DeviceReduce;
 using cub::DeviceRadixSort;
+using cub::DeviceScan;
 
 template <typename T>
 __global__ void makeCodes(
@@ -66,6 +68,34 @@ __device__ inline int_fast8_t delta(const Code_t a, const Code_t b) {
     return __clzll(a ^ b) - 1;
 }
 
+__global__ void findDups(
+    const Code_t* codes,
+    int* contributes,
+    const int N
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx > 0 && idx < N) {
+        // code only contributse to all nodes if different than its left neighbor
+        contributes[idx] = (codes[idx] != codes[idx - 1]);
+    }
+    if (idx == 0) {
+        // set as 0 to make array 0-indexed (even though it contributes)
+        contributes[idx] = 0;
+    }
+}
+
+__global__ void moveDups(
+    const Code_t* in_codes,
+    Code_t* out_codes,
+    const int* out_idx,
+    const int N
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        out_codes[out_idx[idx]] = in_codes[idx];
+    }
+}
+
 __global__ void constructTree(
     const Code_t* codes,
     bool* hasLeafLeft,
@@ -112,7 +142,7 @@ __global__ void constructTree(
             int divisor;
             // Find the other end using binary search
             for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
-                if (i + (l + t)*d >= 0 &&
+                if (i + static_cast<ptrdiff_t>(l + t)*d >= 0 &&
                     i + (l + t)*d < N &&
                     delta(code_i, codes[i + (l + t)*d]) > delta_min) {
                     l += t;
@@ -211,23 +241,64 @@ void RadixTree::encodePoints(const PointCloud<float>& cloud) {
     CudaCheckCall(cudaFree(d_data_z));
 }
 
+void RadixTree::removeDuplicates(Code_t* d_codes_sorted) {
+    int blocks, tpb;
+    std::tie(blocks, tpb) = makeLaunchParams(n_pts);
+    int* contributions;
+    CudaCheckCall(cudaMallocManaged(&contributions, n_pts * sizeof(*contributions)));
+    findDups<<<blocks, tpb>>>(d_codes_sorted, contributions, n_pts);
+    int* final_pt_idx;
+    CudaCheckCall(cudaMallocManaged(&final_pt_idx, n_pts * sizeof(*final_pt_idx)));
+    // prefix sum to find output indices
+    void* d_temp_storage = nullptr;
+    size_t temp_storage_reqd = 0;
+    CudaCheckCall(
+        DeviceScan::InclusiveSum(d_temp_storage,
+        temp_storage_reqd,
+        contributions,
+        final_pt_idx,
+        n_pts)
+    );
+    CudaCheckCall(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_reqd));
+    CudaCheckCall(
+        DeviceScan::InclusiveSum(d_temp_storage,
+        temp_storage_reqd,
+        contributions,
+        final_pt_idx,
+        n_pts)
+    );
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    CudaCheckCall(g_allocator.DeviceFree(d_temp_storage));
+
+    // get number of unique codes (index of last element is 1 less than number of elements)
+    int n_old_pts = n_pts;
+    n_pts = final_pt_idx[n_pts - 1] + 1;
+    CudaCheckCall(cudaFree(contributions));
+    // move points into their final positions
+    // allocate space for un-duplicated points
+    CudaCheckCall(cudaMallocManaged(&d_tree.mortonCode, n_pts * sizeof(*d_tree.mortonCode)));
+
+    moveDups<<<blocks, tpb>>>(d_codes_sorted, d_tree.mortonCode, final_pt_idx, n_old_pts);
+
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    CudaCheckCall(cudaFree(final_pt_idx));
+
+    printf("%d duplicates removed\n", n_old_pts - n_pts);
+}
+
 RadixTree::RadixTree(const PointCloud<float>& cloud) {
     // Check that the cast is okay
     assert(cloud.x_vals.size() <= std::numeric_limits<decltype(n_pts)>::max());
     n_pts = static_cast<decltype(n_pts)>(cloud.x_vals.size());
-    // allocate memory for tree
+    // allocate memory for codes in tree
     CudaCheckCall(cudaMallocManaged(&d_tree.mortonCode, sizeof(*d_tree.mortonCode) * n_pts));
-    CudaCheckCall(cudaMallocManaged(&d_tree.hasLeafLeft, sizeof(*d_tree.hasLeafRight) * n_pts));
-    CudaCheckCall(cudaMallocManaged(&d_tree.hasLeafRight, sizeof(*d_tree.hasLeafRight) * n_pts));
-    CudaCheckCall(cudaMallocManaged(&d_tree.prefixN, sizeof(*d_tree.prefixN) * n_pts));
-    CudaCheckCall(cudaMallocManaged(&d_tree.leftChild, sizeof(*d_tree.leftChild) * n_pts));
-    CudaCheckCall(cudaMallocManaged(&d_tree.parent, sizeof(*d_tree.parent) * n_pts));
 
-    // fill up mortonCode in d_tree
+    // fill up d_tree.mortonCode
     encodePoints(cloud);
 
-    // Sort in ascending order
-    // Just the Morton codes from the nodes
+    // Sort the Morton codes nodes in ascending order
     Code_t* d_codes_sorted;
     CudaCheckCall(cudaMallocManaged(&d_codes_sorted, sizeof(*d_codes_sorted) * n_pts));
     void* d_temp_storage = nullptr;
@@ -248,15 +319,24 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     cudaDeviceSynchronize();
     CudaCheckError();
     g_allocator.DeviceFree(d_temp_storage);
-    // TODO: Remove duplicates
-    n_nodes = n_pts - 1;
-
-    // Swap out keys for sorted keys
-    // Okay to do at this point, because nothing else in d_tree has been filled
+    // free these now that they have been sorted, will be re-allocated after duplicate removal
     CudaCheckCall(cudaFree(d_tree.mortonCode));
-    d_tree.mortonCode = d_codes_sorted;
+
+    // Remove duplicates
+    removeDuplicates(d_codes_sorted);
+    CudaCheckCall(cudaFree(d_codes_sorted));
+
+    // allocate memory for d_tree now that we know the true number of points
+    CudaCheckCall(cudaMallocManaged(&d_tree.hasLeafLeft, sizeof(*d_tree.hasLeafRight) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.hasLeafRight, sizeof(*d_tree.hasLeafRight) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.prefixN, sizeof(*d_tree.prefixN) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.leftChild, sizeof(*d_tree.leftChild) * n_pts));
+    CudaCheckCall(cudaMallocManaged(&d_tree.parent, sizeof(*d_tree.parent) * n_pts));
+
 
     // Make tree
+    // number of nodes is one less than points
+    n_nodes = n_pts - 1;
     int blocks, tpb;
     std::tie(blocks, tpb) = makeLaunchParams(n_nodes);
     constructTree<<<blocks, tpb>>>(d_tree.mortonCode,

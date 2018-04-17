@@ -52,6 +52,9 @@ private:
     // Encodes point cloud into mortonCode array of d_tree
     void encodePoints(const PointCloud<float>& cloud);
 
+    // Removes duplicate codes from d_tree (and allocates d_tree.mortonCode)
+    void removeDuplicates(Code_t* d_codes_sorted);
+
     // caching device allocator for CUB temporary storage
     cub::CachingDeviceAllocator g_allocator;
 };

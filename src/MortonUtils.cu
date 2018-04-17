@@ -11,9 +11,9 @@ __host__ __device__ Code_t pointToCode(
     const float min_coord,
     const float range) {
     const uint32_t bitscale = 0xFFFFFFFFu >> (32 - (CODE_LEN / 3));
-    const uint32_t x_coord = bitscale * ((x - min_coord) / range);
-    const uint32_t y_coord = bitscale * ((y - min_coord) / range);
-    const uint32_t z_coord = bitscale * ((z - min_coord) / range);
+    const uint32_t x_coord = static_cast<uint32_t>(bitscale * ((x - min_coord) / range));
+    const uint32_t y_coord = static_cast<uint32_t>(bitscale * ((y - min_coord) / range));
+    const uint32_t z_coord = static_cast<uint32_t>(bitscale * ((z - min_coord) / range));
     // printf("Point %lu = (%u, %u, %u)\n", (unsigned long)idx, (unsigned int)x_coord, (unsigned int)y_coord, (unsigned int)z_coord);
     return morton3D_64_encode(x_coord, y_coord, z_coord);
 }

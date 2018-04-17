@@ -30,6 +30,9 @@ __device__ void OTNode::setChild(const int child, const int my_child_idx) {
 }
 
 __device__ void OTNode::setLeaf(const int leaf, const int my_child_idx) {
+    if (children[my_child_idx] != 0) {
+        printf("dang\n");
+    }
     children[my_child_idx] = leaf;
     // atomic version of child_mask &= ~(1 << my_child_idx);
     atomicOr(&child_leaf_mask, 1 << my_child_idx);
@@ -252,32 +255,6 @@ Octree::~Octree() {
     CudaCheckCall(cudaFree(nodes));
     CudaCheckCall(cudaFree(u_points));
     delete h_points;
-}
-
-// return index of best point and distance to it
-__device__ std::tuple<int, float> OT::nodePointDistance(
-    const Point& query_pt,
-    const OTNode& node,
-    const Point* points) {
-    // best distance (squared) so far (guaranteed to find a point closer, so will not return infinity)
-    float nearest_dist2 = INFINITY;
-    int best_pt_idx = -1;
-    // for the following loop, last bit is whether this child is a leaf
-    int cur_leaf_mask = node.child_leaf_mask;
-    #pragma unroll
-    for (int i = 0; i < 8; ++i) {
-        if (cur_leaf_mask & 1) {
-            const Point& leaf_pt = points[node.children[i]];
-            const float p_dist2 = Point::distance2(query_pt, leaf_pt);
-            if (p_dist2 < nearest_dist2) {
-                nearest_dist2 = p_dist2;
-                best_pt_idx = node.children[i];
-            }
-        }
-        // Shift over now that this child has been checked
-        cur_leaf_mask >>= 1;
-    }
-    return std::make_tuple(best_pt_idx, nearest_dist2);
 }
 
 // returns the closest possible distance between query_pt and any potential point in node

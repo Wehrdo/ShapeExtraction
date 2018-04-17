@@ -69,10 +69,6 @@ private:
 __device__ float nodeBoxDistance(
     const Point& query_pt,
     const OTNode& node);
-__device__ std::tuple<int, float> nodePointDistance(
-    const Point& query_pt,
-    const OTNode& node,
-    const Point* points);
 
 template <int k>
 __global__ void knnSearchKernel(

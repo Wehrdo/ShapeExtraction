@@ -56,4 +56,4 @@ inline void __cudaCheckError( const char *file, const int line )
     return;
 }
 
- std::tuple<int, int> makeLaunchParams(size_t n, int tpb = 512);
+ std::tuple<int, int> makeLaunchParams(int n, int tpb = 512);
