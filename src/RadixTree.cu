@@ -31,6 +31,7 @@ __global__ void makeCodes(
 
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
+        printf("Raw point %d = (%f, %f, %f)\n", idx, x_vals[idx], y_vals[idx], z_vals[idx]);
         codes[idx] = pointToCode(x_vals[idx], y_vals[idx], z_vals[idx], min_coord, range);
     }
 }
@@ -60,9 +61,6 @@ __device__ inline int_fast8_t delta(const Code_t a, const Code_t b) {
     // Assuming first bit is 0. Asserts check that.
     // Not necessary, so if want to store info in that bit in the future, requires a change
     Code_t bit1_mask = (Code_t)1 << (sizeof(a) * 8 - 1);
-	//if (a & bit1_mask) {
-	//	printf("omg");
-	//}
     assert((a & bit1_mask) == 0);
     assert((b & bit1_mask) == 0);
     return __clzll(a ^ b) - 1;
@@ -269,10 +267,10 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 	cudaDeviceSynchronize();
     CudaCheckError();
 
-    for (int i = 0; i < n_nodes; ++i) {
-        printf("idx = %d, code = %llx, prefixN = %d, left = %d, parent = %d, leftLeaf=%d, rightLeft=%d\n",
-                i, d_tree.mortonCode[i], (int)d_tree.prefixN[i], d_tree.leftChild[i], d_tree.parent[i], (int)d_tree.hasLeafLeft[i], (int)d_tree.hasLeafRight[i]);
-    }
+    // for (int i = 0; i < n_nodes; ++i) {
+    //     printf("idx = %d, code = %llx, prefixN = %d, left = %d, parent = %d, leftLeaf=%d, rightLeft=%d\n",
+    //             i, d_tree.mortonCode[i], (int)d_tree.prefixN[i], d_tree.leftChild[i], d_tree.parent[i], (int)d_tree.hasLeafLeft[i], (int)d_tree.hasLeafRight[i]);
+    // }
 }
 
 RadixTree::~RadixTree() {

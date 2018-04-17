@@ -14,7 +14,6 @@ __device__ Code_t pointToCode(
     const uint32_t x_coord = bitscale * ((x - min_coord) / range);
     const uint32_t y_coord = bitscale * ((y - min_coord) / range);
     const uint32_t z_coord = bitscale * ((z - min_coord) / range);
-    // printf("Raw point %d = (%f, %f, %f)\n", idx, x_vals[idx], y_vals[idx], z_vals[idx]);
     // printf("Point %lu = (%u, %u, %u)\n", (unsigned long)idx, (unsigned int)x_coord, (unsigned int)y_coord, (unsigned int)z_coord);
     return morton3D_64_encode(x_coord, y_coord, z_coord);
 }

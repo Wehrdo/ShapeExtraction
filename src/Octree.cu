@@ -1,17 +1,15 @@
 #include "Octree.hpp"
 #include "dequeue.hpp"
 #include "MortonUtils.hpp"
-#include "PointCloud.hpp"
 #include "CudaCommon.hpp"
 #include "cub/device/device_scan.cuh"
 
 #include <vector>
+#include <tuple>
 #include <type_traits>
 
 using namespace OT;
 using cub::DeviceScan;
-
-#define SEARCH_Q_SIZE (32)
 
 __global__ void decodePoints(
     Point* points,
@@ -108,10 +106,13 @@ __global__ void makeNodes(
     const Code_t* codes,
     const uint8_t* rt_prefixN,
     const int* rt_parents,
+    const float min_coord,
+    const float range,
     const int N) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO: What to do with node 0?
     if (i > 0 && i < N) {
+        // the root doesn't represent level 0 of the "entire" octree
+        int root_level = rt_prefixN[0]/3;
         int oct_idx = node_offsets[i];
         // int n_new_nodes = node_offsets[i] - node_offsets[i - 1];
         int n_new_nodes = rt_node_counts[i];
@@ -121,6 +122,11 @@ __global__ void makeNodes(
             int child_idx = node_prefix & 0b111;
             int parent = oct_idx + 1;
             nodes[parent].setChild(oct_idx, child_idx);
+            // calculate corner point
+            //   (less significant bits have already been shifted off)
+            nodes[oct_idx].corner = codeToPoint(node_prefix << (CODE_LEN - (3 * level)), min_coord, range);
+            // each cell is half the size of 
+            nodes[oct_idx].cell_size = range / static_cast<float>(1 << (level - root_level));
             oct_idx = parent;
         }
         if (n_new_nodes > 0) {
@@ -133,6 +139,9 @@ __global__ void makeNodes(
             Code_t top_node_prefix = codes[i] >> (CODE_LEN - (3 * top_level));
             int child_idx = top_node_prefix & 0b111;
             nodes[oct_parent].setChild(oct_idx, child_idx);
+            // set corner point
+            nodes[oct_idx].corner = codeToPoint(top_node_prefix << (CODE_LEN - (3 * top_level)), min_coord, range);
+            nodes[oct_idx].cell_size = range / static_cast<float>(1 << (top_level - root_level));
         }
     }
 }
@@ -188,6 +197,8 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
                                radix_tree.d_tree.mortonCode,
                                radix_tree.d_tree.prefixN,
                                radix_tree.d_tree.parent,
+                               radix_tree.min_coord,
+                               radix_tree.max_coord - radix_tree.min_coord,
                                radix_tree.n_nodes);
 
     linkLeafNodes<<<blocks, tpb>>>(nodes,
@@ -218,70 +229,74 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     CudaCheckCall(cudaFree(oc_node_offsets));
 
     // decode points for use later
-    CudaCheckCall(cudaMallocManaged(&u_points, radix_tree.n_pts * sizeof(Point)));
+    CudaCheckCall(cudaMallocManaged(&u_points, radix_tree.n_pts * sizeof(*u_points)));
     std::tie(blocks, tpb) = makeLaunchParams(radix_tree.n_pts);
     decodePoints<<<blocks, tpb>>>(u_points,
                                    radix_tree.d_tree.mortonCode,
                                    radix_tree.min_coord,
                                    radix_tree.max_coord - radix_tree.min_coord,
                                    radix_tree.n_pts);
-
     cudaDeviceSynchronize();
     CudaCheckError();
+    // copy them to host memory, too
+    h_points = new Point[radix_tree.n_pts];
+    CudaCheckCall(cudaMemcpy(h_points, u_points, radix_tree.n_pts * sizeof(*h_points), cudaMemcpyDeviceToHost));
 }
 
 Octree::~Octree() {
     CudaCheckCall(cudaFree(nodes));
+    CudaCheckCall(cudaFree(u_points));
+    delete h_points;
 }
 
-template <int k>
-__global__ void knnSearch(
-    const OTNode* octree,
-    const Point* query_pts,
-    Point* result_pts,
-    const float eps,
-    const int N) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < N) {
-        const Point query = query_pts[i];
-        PriorityQueue<OTNode, SEARCH_Q_SIZE> queue;
-        // distance explored so far
-        float r = 0;
-        // best distance so far
-        float d = INFINITY;
-        while (d >= (1 + eps) * r) {
-            // if 
+// return index of best point and distance to it
+__device__ std::tuple<int, float> OT::nodePointDistance(
+    const Point& query_pt,
+    const OTNode& node,
+    const Point* points) {
+    // best distance (squared) so far (guaranteed to find a point closer, so will not return infinity)
+    float nearest_dist2 = INFINITY;
+    int best_pt_idx = -1;
+    // for the following loop, last bit is whether this child is a leaf
+    int cur_leaf_mask = node.child_leaf_mask;
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        if (cur_leaf_mask & 1) {
+            const Point& leaf_pt = points[node.children[i]];
+            const float p_dist2 = Point::distance2(query_pt, leaf_pt);
+            if (p_dist2 < nearest_dist2) {
+                nearest_dist2 = p_dist2;
+                best_pt_idx = node.children[i];
+            }
         }
-
+        // Shift over now that this child has been checked
+        cur_leaf_mask >>= 1;
     }
+    return std::make_tuple(best_pt_idx, nearest_dist2);
 }
 
-template <int k>
-std::vector<std::array<Point, k>> knnSearch(const std::vector<Point>& points) {
-    const int n = points.size();
-    std::vector<std::array<Point, k>> results;
-    // results in unified memory. each array of k elements is stored back-to-back
-    Point* d_results;
-    // query points;
-    Point* d_query;
-    // allocate device storage 
-    CudaCheckCall(cudaMallocManaged(&d_results, n * k * sizeof(Point)));
-    CudaCheckCall(cudaMalloc(&d_query, n * sizeof(Point)));
-    // transfer query points to device memory
-    CudaCheckCall(cudaMemcpy(d_query, &points[0], n * sizeof(Point), cudaMemcpyHostToDevice));
-
-    int blocks, tpb;
-    std::tie(blocks, tpb) = makeLaunchParams(n);
-    knnSearch<k><<<blocks, tpb>>>(d_query, d_results, 0.1, n);
-    cudaDeviceSynchronize();
-    CudaCheckError();
-
-    results.resize(points.size());
-    CudaCheckCall(cudaMemcpy(&results[0], d_results, n * k * sizeof(Point)));
-
-
-    CudaCheckCall(cudaFree(d_query));
-    CudaCheckCall(cudaFree(d_results));
-
-    return results;
+__device__ float OT::nodeBoxDistance(
+    const Point& query_pt,
+    const OTNode& node,
+    const Point* points) {
+    // if node has a point as a child (leaf children)
+    // if (node.child_leaf_mask) {
+    //     return std::get<1>(nodePointDistance(query_pt, node, points));
+    // }
+    // no children, so use nearest corner on node bounding box
+    // else {
+        // boundaries of octree cell
+        float x_bounds1 = node.corner.x;
+        float x_bounds2 = node.corner.x + node.cell_size;
+        float y_bounds1 = node.corner.y;
+        float y_bounds2 = node.corner.y + node.cell_size;
+        float z_bounds1 = node.corner.z;
+        float z_bounds2 = node.corner.z + node.cell_size;
+        // minimum distance to boundaries in each dimension
+        float min_x = fminf(fabsf(query_pt.x - x_bounds1), fabsf(query_pt.x - x_bounds2));
+        float min_y = fminf(fabsf(query_pt.y - y_bounds1), fabsf(query_pt.y - y_bounds2));
+        float min_z = fminf(fabsf(query_pt.z - z_bounds1), fabsf(query_pt.z - z_bounds2));
+        // total distance to nearest corner
+        return min_x*min_x + min_y*min_y + min_z*min_z;
+    // }
 }

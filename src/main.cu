@@ -1,5 +1,6 @@
 #include <iostream>
 
+#include "PointCloud.hpp"
 #include "KittiData.hpp"
 #include "RadixTree.hpp"
 #include "Octree.hpp"
@@ -12,6 +13,18 @@ int main() {
 
     RT::RadixTree radix_tree(cloud);
     OT::Octree octree(radix_tree);
+
+    std::vector<Point> search_pts({
+        Point(50.7, 0.5, 1.9),
+        Point(52, 0, 3),
+        Point(50.583, 1.29, 1.92)
+    });
+
+    auto results = octree.knnSearch<1>(search_pts);
+    for (const auto& pt_idxs : results) {
+        const Point& pt = octree.h_points[pt_idxs[0]];
+        std::cout << pt.x << ", " << pt.y << ", " << pt.z << std::endl;
+    }
 
     // cloud.saveAsPly("kitti0.ply");
 

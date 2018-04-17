@@ -6,16 +6,27 @@
 #include <cassert>
 
 
+// code location prefix. When compiling as CUDA, makes available on host and device
 #ifdef __CUDACC__
-#define POINT_CONST_PREFIX __host__ __device__
+#define POINT_LOC_PREFIX __host__ __device__
 #else
-#define POINT_CONST_PREFIX
+#define POINT_LOC_PREFIX
 #endif
 
-
 struct Point {
-    POINT_CONST_PREFIX Point(float x, float y, float z) : x(x), y(y), z(z) {}
+    POINT_LOC_PREFIX Point(float x, float y, float z) : x(x), y(y), z(z) {}
+    POINT_LOC_PREFIX Point() : x(0), y(0), z(0) {}
+
+    // members
     float x, y, z;
+
+    // the square distance between two points
+    POINT_LOC_PREFIX static float distance2(const Point& p1, const Point& p2) {
+        float x_diff = p1.x - p2.x;
+        float y_diff = p1.y - p2.y;
+        float z_diff = p1.z - p2.z;
+        return x_diff*x_diff + y_diff*y_diff + z_diff*z_diff;
+    }
 };
 
 template <typename T>
