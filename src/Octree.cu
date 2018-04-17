@@ -70,20 +70,27 @@ __global__ void linkLeafNodes(
     const bool* rt_hasLeafLeft,
     const bool* rt_hasLeafRight,
     const uint8_t* rt_prefixN,
+    const int* rt_parents,
     const int* rt_leftChild,
     const int N) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N) {
-        int n_new_nodes = rt_node_counts[i];
+        // int n_new_nodes = rt_node_counts[i];
         // if (n_new_nodes > 0) {
             // link leaves if possible
-            int bottom_oct_idx = node_offsets[i];
+            // int bottom_oct_idx = node_offsets[i];
             if (rt_hasLeafLeft[i]) {
                 int leaf_idx = rt_leftChild[i];
                 int leaf_level = rt_prefixN[i]/3 + 1;
                 Code_t leaf_prefix = codes[leaf_idx] >> (CODE_LEN - (3 * leaf_level));
                 int child_idx = leaf_prefix & 0b111;
-                // link leaf to bottom octree node in string
+                // walk up the radix tree until finding a node which contributes an octnode
+                int rt_node = i;
+                while (rt_node_counts[rt_node] == 0) {
+                    rt_node = rt_parents[rt_node];
+                }
+                // the lowest octnode in the string contributed by rt_node will be the lowest index
+                int bottom_oct_idx = node_offsets[rt_node];
                 nodes[bottom_oct_idx].setLeaf(leaf_idx, child_idx);
             }
             if (rt_hasLeafRight[i]) {
@@ -91,9 +98,12 @@ __global__ void linkLeafNodes(
                 int leaf_level = rt_prefixN[i]/3 + 1;
                 Code_t leaf_prefix = codes[leaf_idx] >> (CODE_LEN - (3 * leaf_level));
                 int child_idx = leaf_prefix & 0b111;
-                // if (rt_hasLeafLeft[i] && nodes[bottom_oct_idx].children[child_idx] != 0) {
-                //     printf("augh\n");
-                // }
+                int rt_node = i;
+                while (rt_node_counts[rt_node] == 0) {
+                    rt_node = rt_parents[rt_node];
+                }
+                // the lowest octnode in the string contributed by rt_node will be the lowest index
+                int bottom_oct_idx = node_offsets[rt_node];
                 nodes[bottom_oct_idx].setLeaf(leaf_idx, child_idx);
             }
         // }
@@ -225,8 +235,6 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
                                radix_tree.min_coord,
                                tree_range,
                                radix_tree.n_nodes);
-    cudaDeviceSynchronize();
-    CudaCheckError();
 
     linkLeafNodes<<<blocks, tpb>>>(nodes,
                                    oc_node_offsets,
@@ -235,6 +243,7 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
                                    radix_tree.d_tree.hasLeafLeft,
                                    radix_tree.d_tree.hasLeafRight,
                                    radix_tree.d_tree.prefixN,
+                                   radix_tree.d_tree.parent,
                                    radix_tree.d_tree.leftChild,
                                    radix_tree.n_nodes);
     cudaDeviceSynchronize();
@@ -243,17 +252,17 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     checkTree(root_prefix, root_level*3, nodes, 0, radix_tree.d_tree.mortonCode);
 
     // cudaDeviceSynchronize();
-    for (int i = 0; i < n_oct_nodes; ++i) {
-        printf("Node %d:\n\tparent: %d\n\tchildren:\n", i, nodes[i].parent);
-        for (int j = 0; j < 8; ++j) {
-            if (nodes[i].child_node_mask & (1 << j)) {
-                printf("\t\tNode %d: %d\n", j, nodes[i].children[j]);
-            }
-            if (nodes[i].child_leaf_mask & (1 << j)) {
-                printf("\t\tLeaf %d: %d\n", j, nodes[i].children[j]);
-            }
-        }
-    }
+    // for (int i = 0; i < n_oct_nodes; ++i) {
+    //     printf("Node %d:\n\tparent: %d\n\tchildren:\n", i, nodes[i].parent);
+    //     for (int j = 0; j < 8; ++j) {
+    //         if (nodes[i].child_node_mask & (1 << j)) {
+    //             printf("\t\tNode %d: %d\n", j, nodes[i].children[j]);
+    //         }
+    //         if (nodes[i].child_leaf_mask & (1 << j)) {
+    //             printf("\t\tLeaf %d: %d\n", j, nodes[i].children[j]);
+    //         }
+    //     }
+    // }
 
     // free temporary memory from construction
     CudaCheckCall(cudaFree(rt_edge_counts));

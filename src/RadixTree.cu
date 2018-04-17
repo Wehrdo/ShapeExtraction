@@ -363,10 +363,10 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 	cudaDeviceSynchronize();
     CudaCheckError();
 
-    for (int i = 0; i < n_nodes; ++i) {
-        printf("idx = %d, code = %llx, prefixN = %d, left = %d, parent = %d, leftLeaf=%d, rightLeft=%d\n",
-                i, d_tree.mortonCode[i], (int)d_tree.prefixN[i], d_tree.leftChild[i], d_tree.parent[i], (int)d_tree.hasLeafLeft[i], (int)d_tree.hasLeafRight[i]);
-    }
+    // for (int i = 0; i < n_nodes; ++i) {
+    //     printf("idx = %d, code = %llx, prefixN = %d, left = %d, parent = %d, leftLeaf=%d, rightLeft=%d\n",
+    //             i, d_tree.mortonCode[i], (int)d_tree.prefixN[i], d_tree.leftChild[i], d_tree.parent[i], (int)d_tree.hasLeafLeft[i], (int)d_tree.hasLeafRight[i]);
+    // }
 
     // verify radix tree
     for (int i = 0; i < n_nodes; ++i) {

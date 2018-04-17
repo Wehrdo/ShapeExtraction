@@ -1,4 +1,5 @@
 #include <iostream>
+#include <chrono>
 
 #include "PointCloud.hpp"
 #include "KittiData.hpp"
@@ -11,8 +12,11 @@ using std::endl;
 int main() {
     auto cloud = KittiData::load("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin");
 
+    auto start_time = std::chrono::high_resolution_clock::now();
     RT::RadixTree radix_tree(cloud);
     OT::Octree octree(radix_tree);
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::cout << "For " << cloud.x_vals.size() << " points, construction took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
 
     std::vector<Point> search_pts({
         Point(50.7, 0.5, 1.9),
