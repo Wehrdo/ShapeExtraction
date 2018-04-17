@@ -129,25 +129,35 @@ __global__ void constructTree(
             // First node is root, covering whole tree
             l = N - 1;
         }
+        //else if (i == N - 1) {
+        //    l = 1;
+        //}
         else {
             auto delta_min = delta(code_i, codes[i - d]);
             Code_t l_max = 2;
             // Cast to ptrdiff_t so in case the result is negative (since d is +/- 1), we can catch it and not index out of bounds
             while (i + static_cast<ptrdiff_t>(l_max)*d >= 0 &&
-                i + l_max*d < N &&
+                i + l_max*d <= N &&
                 delta(code_i, codes[i + l_max * d]) > delta_min) {
                 l_max *= 2;
             }
+            int l_cutoff = (d==-1) ? i : N - i;
             int t;
             int divisor;
             // Find the other end using binary search
             for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
-                if (i + static_cast<ptrdiff_t>(l + t)*d >= 0 &&
-                    i + (l + t)*d < N &&
+                if (l + t <= l_cutoff &&
                     delta(code_i, codes[i + (l + t)*d]) > delta_min) {
                     l += t;
                 }
             }
+            // for (t = l_max / 2, divisor = 2; t >= 1; divisor *= 2, t = l_max / divisor) {
+            //     if (i + static_cast<ptrdiff_t>(l + t)*d >= 0 &&
+            //         i + (l + t)*d < N &&
+            //         delta(code_i, codes[i + (l + t)*d]) > delta_min) {
+            //         l += t;
+            //     }
+            // }
         }
         int j = i + l*d;
         // Find the split position using binary search
@@ -157,9 +167,11 @@ __global__ void constructTree(
         int t;
         int max_divisor = 1 << log2_ceil(l);
         int divisor = 2;
+        int s_cutoff = (d == -1) ? i - 1 : N - i - 1;
         for (t = ceil_div<Code_t>(l, 2); divisor <= max_divisor; divisor <<= 1, t = ceil_div<Code_t>(l, divisor)) {
         // for (t = ceil_div<Code_t>(l, 2), divisor = 2; t >= 1; divisor *= 2, t = ceil_div<Code_t>(l, divisor)) {
-            if (delta(code_i, codes[i + (s + t)*d]) > delta_node) {
+            if (s + t <= s_cutoff &&
+                delta(code_i, codes[i + (s + t)*d]) > delta_node) {
                 s += t;
             }
         }
@@ -239,6 +251,8 @@ void RadixTree::encodePoints(const PointCloud<float>& cloud) {
     CudaCheckCall(cudaFree(d_data_x));
     CudaCheckCall(cudaFree(d_data_y));
     CudaCheckCall(cudaFree(d_data_z));
+    CudaCheckCall(cudaFree(mins));
+    CudaCheckCall(cudaFree(maxes));
 }
 
 void RadixTree::removeDuplicates(Code_t* d_codes_sorted) {
@@ -349,10 +363,22 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
 	cudaDeviceSynchronize();
     CudaCheckError();
 
-    // for (int i = 0; i < n_nodes; ++i) {
-    //     printf("idx = %d, code = %llx, prefixN = %d, left = %d, parent = %d, leftLeaf=%d, rightLeft=%d\n",
-    //             i, d_tree.mortonCode[i], (int)d_tree.prefixN[i], d_tree.leftChild[i], d_tree.parent[i], (int)d_tree.hasLeafLeft[i], (int)d_tree.hasLeafRight[i]);
-    // }
+    for (int i = 0; i < n_nodes; ++i) {
+        printf("idx = %d, code = %llx, prefixN = %d, left = %d, parent = %d, leftLeaf=%d, rightLeft=%d\n",
+                i, d_tree.mortonCode[i], (int)d_tree.prefixN[i], d_tree.leftChild[i], d_tree.parent[i], (int)d_tree.hasLeafLeft[i], (int)d_tree.hasLeafRight[i]);
+    }
+
+    // verify radix tree
+    for (int i = 0; i < n_nodes; ++i) {
+        int this_code_len = d_tree.prefixN[i];
+        Code_t left_code = d_tree.mortonCode[d_tree.leftChild[i]];
+        int left_code_len = d_tree.prefixN[d_tree.leftChild[i]];
+        Code_t right_code = d_tree.mortonCode[d_tree.leftChild[i] + 1];
+        int right_code_len = d_tree.prefixN[d_tree.leftChild[i] + 1];
+        if (left_code >> (CODE_LEN - this_code_len) != right_code >> (CODE_LEN - this_code_len)) {
+            assert(false);
+        }
+    }
 }
 
 RadixTree::~RadixTree() {

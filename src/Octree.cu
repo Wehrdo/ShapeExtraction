@@ -30,9 +30,6 @@ __device__ void OTNode::setChild(const int child, const int my_child_idx) {
 }
 
 __device__ void OTNode::setLeaf(const int leaf, const int my_child_idx) {
-    if (children[my_child_idx] != 0) {
-        printf("dang\n");
-    }
     children[my_child_idx] = leaf;
     // atomic version of child_mask &= ~(1 << my_child_idx);
     atomicOr(&child_leaf_mask, 1 << my_child_idx);
@@ -77,25 +74,27 @@ __global__ void linkLeafNodes(
     const int N) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N) {
-        // int n_new_nodes = rt_node_counts[i];
+        int n_new_nodes = rt_node_counts[i];
         // if (n_new_nodes > 0) {
             // link leaves if possible
+            int bottom_oct_idx = node_offsets[i];
             if (rt_hasLeafLeft[i]) {
                 int leaf_idx = rt_leftChild[i];
                 int leaf_level = rt_prefixN[i]/3 + 1;
                 Code_t leaf_prefix = codes[leaf_idx] >> (CODE_LEN - (3 * leaf_level));
                 int child_idx = leaf_prefix & 0b111;
                 // link leaf to bottom octree node in string
-                int bottom_oct = node_offsets[i];
-                nodes[bottom_oct].setLeaf(leaf_idx, child_idx);
+                nodes[bottom_oct_idx].setLeaf(leaf_idx, child_idx);
             }
             if (rt_hasLeafRight[i]) {
                 int leaf_idx = rt_leftChild[i] + 1;
                 int leaf_level = rt_prefixN[i]/3 + 1;
                 Code_t leaf_prefix = codes[leaf_idx] >> (CODE_LEN - (3 * leaf_level));
                 int child_idx = leaf_prefix & 0b111;
-                int bottom_oct = node_offsets[i];
-                nodes[bottom_oct].setLeaf(leaf_idx, child_idx);
+                // if (rt_hasLeafLeft[i] && nodes[bottom_oct_idx].children[child_idx] != 0) {
+                //     printf("augh\n");
+                // }
+                nodes[bottom_oct_idx].setLeaf(leaf_idx, child_idx);
             }
         // }
     }
@@ -125,6 +124,7 @@ __global__ void makeNodes(
             int child_idx = node_prefix & 0b111;
             int parent = oct_idx + 1;
             nodes[parent].setChild(oct_idx, child_idx);
+            nodes[oct_idx].parent = parent;
             // calculate corner point
             //   (less significant bits have already been shifted off)
             nodes[oct_idx].corner = codeToPoint(node_prefix << (CODE_LEN - (3 * level)), min_coord, range);
@@ -142,10 +142,27 @@ __global__ void makeNodes(
             Code_t top_node_prefix = codes[i] >> (CODE_LEN - (3 * top_level));
             int child_idx = top_node_prefix & 0b111;
             nodes[oct_parent].setChild(oct_idx, child_idx);
+            nodes[oct_idx].parent = oct_parent;
             // set corner point
             nodes[oct_idx].corner = codeToPoint(top_node_prefix << (CODE_LEN - (3 * top_level)), min_coord, range);
             nodes[oct_idx].cell_size = range / static_cast<float>(1 << (top_level - root_level));
         }
+    }
+}
+
+void checkTree(const Code_t prefix, int code_len, const OTNode* nodes, const int oct_idx, const Code_t* codes) {
+    const OTNode& node = nodes[oct_idx];
+    for (int i = 0; i < 8; ++i) {
+            Code_t new_pref = (prefix << 3) | i;
+            if (node.child_node_mask & (1 << i)) {
+                checkTree(new_pref, code_len + 3, nodes, node.children[i], codes);
+            }
+            if (node.child_leaf_mask & (1 << i)) {
+                Code_t leaf_prefix = codes[node.children[i]] >> (CODE_LEN - (code_len + 3));
+                if (new_pref != leaf_prefix) {
+                    printf("oh no...\n");
+                }
+            }
     }
 }
 
@@ -208,6 +225,8 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
                                radix_tree.min_coord,
                                tree_range,
                                radix_tree.n_nodes);
+    cudaDeviceSynchronize();
+    CudaCheckError();
 
     linkLeafNodes<<<blocks, tpb>>>(nodes,
                                    oc_node_offsets,
@@ -218,19 +237,23 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
                                    radix_tree.d_tree.prefixN,
                                    radix_tree.d_tree.leftChild,
                                    radix_tree.n_nodes);
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    // verify octree
+    checkTree(root_prefix, root_level*3, nodes, 0, radix_tree.d_tree.mortonCode);
 
     // cudaDeviceSynchronize();
-    // for (int i = 0; i < n_oct_nodes; ++i) {
-    //     printf("Node %d:\n\tparent: %d\n\tchildren:\n", i, nodes[i].parent);
-    //     for (int j = 0; j < 8; ++j) {
-    //         if (nodes[i].child_node_mask & (1 << j)) {
-    //             printf("\t\tNode %d: %d\n", j, nodes[i].children[j]);
-    //         }
-    //         if (nodes[i].child_leaf_mask & (1 << j)) {
-    //             printf("\t\tLeaf %d: %d\n", j, nodes[i].children[j]);
-    //         }
-    //     }
-    // }
+    for (int i = 0; i < n_oct_nodes; ++i) {
+        printf("Node %d:\n\tparent: %d\n\tchildren:\n", i, nodes[i].parent);
+        for (int j = 0; j < 8; ++j) {
+            if (nodes[i].child_node_mask & (1 << j)) {
+                printf("\t\tNode %d: %d\n", j, nodes[i].children[j]);
+            }
+            if (nodes[i].child_leaf_mask & (1 << j)) {
+                printf("\t\tLeaf %d: %d\n", j, nodes[i].children[j]);
+            }
+        }
+    }
 
     // free temporary memory from construction
     CudaCheckCall(cudaFree(rt_edge_counts));

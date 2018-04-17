@@ -14,6 +14,7 @@ namespace OT {
 constexpr static int SEARCH_Q_SIZE = 32;
 
 struct OTNode {
+    int parent;
     // TODO: This is overkill number of pointers
     int children[8];
 
