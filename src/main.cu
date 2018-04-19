@@ -5,6 +5,7 @@
 #include "KittiData.hpp"
 #include "RadixTree.hpp"
 #include "Octree.hpp"
+#include "NormalEstimation.hpp"
 
 using std::cout;
 using std::endl;
@@ -19,18 +20,26 @@ int main() {
     std::cout << "For " << cloud.x_vals.size() << " points, construction took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
 
     std::vector<Point> search_pts({
-        Point(50.7, 0.5, 1.9),
-        Point(52, 0, 3),
-        Point(50.583, 1.29, 1.92)
+        // Point(50.7, 0.5, 1.9),
+        // Point(52, 0, 3),
+        // Point(50.583, 1.29, 1.92)
+        Point(1, 2, 3),
+        Point(100, 20, 5),
+        Point(30, 5, 16)
     });
 
-    auto results = octree.knnSearch<2>(search_pts);
-    for (const auto& pt_idxs : results) {
-        for (int pt_idx : pt_idxs) {
-            const Point& pt = octree.h_points[pt_idx];
-            std::cout << pt.x << ", " << pt.y << ", " << pt.z << std::endl;
-        }
-        std::cout << std::endl;
+    // auto results = octree.knnSearch<2>(search_pts);
+    // for (const auto& pt_idxs : results) {
+    //     for (int pt_idx : pt_idxs) {
+    //         const Point& pt = octree.h_points[pt_idx];
+    //         std::cout << pt.x << ", " << pt.y << ", " << pt.z << std::endl;
+    //     }
+    //     std::cout << std::endl;
+    // }
+
+    auto results = NormalEstimation::estimateNormals<3>(octree, search_pts);
+    for (const auto& pt : results) {
+        std::cout << pt.x << ", " << pt.y << ", " << pt.z << std::endl;
     }
 
     // cloud.saveAsPly("kitti0.ply");

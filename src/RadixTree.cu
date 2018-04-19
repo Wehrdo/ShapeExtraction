@@ -369,16 +369,16 @@ RadixTree::RadixTree(const PointCloud<float>& cloud) {
     // }
 
     // verify radix tree
-    for (int i = 0; i < n_nodes; ++i) {
-        int this_code_len = d_tree.prefixN[i];
-        Code_t left_code = d_tree.mortonCode[d_tree.leftChild[i]];
-        int left_code_len = d_tree.prefixN[d_tree.leftChild[i]];
-        Code_t right_code = d_tree.mortonCode[d_tree.leftChild[i] + 1];
-        int right_code_len = d_tree.prefixN[d_tree.leftChild[i] + 1];
-        if (left_code >> (CODE_LEN - this_code_len) != right_code >> (CODE_LEN - this_code_len)) {
-            assert(false);
-        }
-    }
+    // for (int i = 0; i < n_nodes; ++i) {
+    //     int this_code_len = d_tree.prefixN[i];
+    //     Code_t left_code = d_tree.mortonCode[d_tree.leftChild[i]];
+    //     int left_code_len = d_tree.prefixN[d_tree.leftChild[i]];
+    //     Code_t right_code = d_tree.mortonCode[d_tree.leftChild[i] + 1];
+    //     int right_code_len = d_tree.prefixN[d_tree.leftChild[i] + 1];
+    //     if (left_code >> (CODE_LEN - this_code_len) != right_code >> (CODE_LEN - this_code_len)) {
+    //         assert(false);
+    //     }
+    // }
 }
 
 RadixTree::~RadixTree() {

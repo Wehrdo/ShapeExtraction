@@ -46,7 +46,14 @@ public:
     Octree(const RT::RadixTree& radix_tree);
     ~Octree();
     template <int k>
-    std::vector<std::array<int, k>> knnSearch(const std::vector<Point>& points);
+    std::vector<std::array<int, k>> knnSearch(const std::vector<Point>& points, const float eps=0.01) const;
+
+    // Performs knn search and stores the k nearest neighbors in pre-allocated device memory d_nn_indices
+    template <int k>
+    void deviceKnnSearch(const std::vector<Point>& points, int* d_nn_indices, const float eps) const;
+
+    // points, as points converted back from morton codes (in unified memory)
+    Point* u_points;
 
     // points in host memory
     Point* h_points;
@@ -56,9 +63,6 @@ private:
 
     // the octree
     OTNode* nodes;
-
-    // points, as points converted back from morton codes (in unified memory)
-    Point* u_points;
     // prefix for the root node
     Code_t root_prefix;
 };
@@ -129,16 +133,13 @@ __global__ void knnSearchKernel(
   // --- Class template implementations ---
 */
 template <int k>
-std::vector<std::array<int, k>> Octree::knnSearch(const std::vector<Point>& points) {
+void Octree::deviceKnnSearch(const std::vector<Point>& points, int* d_nn_indices, const float eps) const {
     const int n = static_cast<int>(points.size());
     assert(points.size() <= std::numeric_limits<decltype(n)>::max());
-    std::vector<std::array<int, k>> results;
-    // results in unified memory. each array of k elements is stored back-to-back
-    int* d_results;
+
     // query points;
     Point* d_query;
     // allocate device storage 
-    CudaCheckCall(cudaMallocManaged(&d_results, n * k * sizeof(*d_results)));
     CudaCheckCall(cudaMalloc(&d_query, n * sizeof(*d_query)));
     // transfer query points to device memory
     CudaCheckCall(cudaMemcpy(d_query, &points[0], n * sizeof(Point), cudaMemcpyHostToDevice));
@@ -148,17 +149,29 @@ std::vector<std::array<int, k>> Octree::knnSearch(const std::vector<Point>& poin
     knnSearchKernel<k><<<blocks, tpb>>>(nodes,
                                   u_points,
                                   d_query,
-                                  d_results,
-                                  0.0f,
+                                  d_nn_indices,
+                                  eps,
                                   n);
     cudaDeviceSynchronize();
     CudaCheckError();
 
+    CudaCheckCall(cudaFree(d_query));
+}
+
+template <int k>
+std::vector<std::array<int, k>> Octree::knnSearch(const std::vector<Point>& points, const float eps) const {
+    const size_t n = points.size();
+    std::vector<std::array<int, k>> results;
+    // results in unified memory. each array of k elements is stored back-to-back
+    int* d_results;
+    CudaCheckCall(cudaMallocManaged(&d_results, n * k * sizeof(*d_results)));
+
+    deviceKnnSearch<k>(points, d_results, eps);
+
     results.resize(points.size());
+    // std::vector and std::array are contiguous, so we can just memcpy
     CudaCheckCall(cudaMemcpy(&results[0], d_results, n * k * sizeof(*d_results), cudaMemcpyDeviceToHost));
 
-
-    CudaCheckCall(cudaFree(d_query));
     CudaCheckCall(cudaFree(d_results));
 
     return results;
