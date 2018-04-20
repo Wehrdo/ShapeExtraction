@@ -53,7 +53,12 @@ public:
     std::vector<T> y_vals;
     std::vector<T> z_vals;
 
+    std::vector<T> x_normals;
+    std::vector<T> y_normals;
+    std::vector<T> z_normals;
+
     bool saveAsPly(std::string filename);
+    void setNormals(std::vector<Point> normals);
 private:
 };
 
@@ -61,6 +66,13 @@ template <typename T>
 bool PointCloud<T>::saveAsPly(std::string filename) {
     assert(x_vals.size() == y_vals.size());
     assert(x_vals.size() == z_vals.size());
+
+    bool has_normals = x_normals.size() != 0;
+    if (has_normals) {
+        assert(x_vals.size() == x_normals.size());
+        assert(x_vals.size() == y_normals.size());
+        assert(x_vals.size() == z_normals.size());
+    }
 
     std::ofstream of;
     of.open(filename);
@@ -73,11 +85,28 @@ bool PointCloud<T>::saveAsPly(std::string filename) {
     of << "property float x" << std::endl;
     of << "property float y" << std::endl;
     of << "property float z" << std::endl;
+    if (has_normals) {
+        of << "property float nx" << std::endl;
+        of << "property float ny" << std::endl;
+        of << "property float nz" << std::endl;
+    }
     of << "end_header" << std::endl;
     for (size_t i = 0; i < x_vals.size(); ++i) {
-        of << x_vals[i] << " " << y_vals[i] << " " << z_vals[i] << std::endl;
+        of << x_vals[i] << " " << y_vals[i] << " " << z_vals[i];
+        if (has_normals) {
+            of << " " << x_normals[i] << " " << y_normals[i] << " " << z_normals[i];
+        }
+        of << std::endl;
     }
 
     of.close();
     return true;
+}
+
+template <>
+void PointCloud<float>::setNormals(std::vector<Point> normals);
+
+template <typename T>
+void PointCloud<T>::setNormals(std::vector<Point> normals) {
+    assert(false); // not implemented for non-floats, since Point object holds floats
 }
