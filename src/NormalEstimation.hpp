@@ -112,7 +112,7 @@ __device__ inline void calculateCovariance(float cov_upper[6], const Point* poin
     // scale summed covariance
     #pragma unroll
     for (int i = 0; i < 6; ++i) {
-        cov_upper[i] /= k; // TODO: Why doesn't covariance calculation divide by k-1, but variance doeos?
+        cov_upper[i] /= (k - 1);
     }
 }
 
