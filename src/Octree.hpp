@@ -123,8 +123,14 @@ __global__ void knnSearchKernel(
 
         #pragma unroll
         for (int i = 0; i < k; ++i) {
-            auto top_result = result_q.removeMin();
-            result_pts[idx*k + i] = top_result.data;
+            // if not enough nearest points found, just repeat the closest
+            if (result_q.size == 0) {
+                result_pts[idx*k + i] = result_pts[idx*k];
+            }
+            else {
+                auto top_result = result_q.removeMin();
+                result_pts[idx*k + i] = top_result.data;
+            }
         }
     }
 }

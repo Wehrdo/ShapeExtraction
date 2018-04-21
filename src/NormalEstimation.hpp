@@ -176,7 +176,7 @@ __global__ void normalsFromEigenVectors(
     Point norm(vec[0], vec[1], vec[2]);
 
     // normalize vector
-    norm /= norm3df(norm.x, norm.y, norm.z);
+    // norm /= norm3df(norm.x, norm.y, norm.z);
 
     Point point = points[idx];
     if ((viewpoint - point).dot(norm) < 0) {
@@ -215,6 +215,7 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree) {
 
     cudaDeviceSynchronize();
     CudaCheckError();
+    CudaCheckCall(cudaFree(u_nn));
 
     // calculate eigenvalues and eigenvectors using cuSolver
     cusolverDnHandle_t cusolverH = NULL;
@@ -286,14 +287,17 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree) {
     cudaDeviceSynchronize();
     CudaCheckError();
 
-    // for (int i = 0; i < n; ++i) {
-    //     if (u_solve_info[i] > 0) {
-    //         printf("Matrix %d does not converge: %d\n", i, u_solve_info[i]);
-    //     }
-    //     if (u_solve_info[i] < 0) {
-    //         printf("Matrix %d has wrong parameter %d\n", i, -u_solve_info[i]);
-    //     }
-    // }
+    for (int i = 0; i < n; ++i) {
+        if (u_solve_info[i] > 0) {
+            printf("Matrix %d does not converge: %d\n", i, u_solve_info[i]);
+        }
+        if (u_solve_info[i] < 0) {
+            printf("Matrix %d has wrong parameter %d\n", i, -u_solve_info[i]);
+        }
+    }
+    CudaCheckCall(cudaFree(u_solve_info));
+    CudaCheckCall(cudaFree(u_W));
+    CudaCheckCall(cudaFree(d_temp_work));
     
     // the location of the viewpoint points were captured from, for orienting normals
     Point viewpoint(0, 0, 0);
@@ -304,7 +308,10 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree) {
     cudaDeviceSynchronize();
     CudaCheckError();
 
+    CudaCheckCall(cudaFree(u_C));
+
     std::vector<Point> results(n);
     CudaCheckCall(cudaMemcpy(&results[0], u_normals, n * sizeof(*u_normals), cudaMemcpyDeviceToHost));
+    CudaCheckCall(cudaFree(u_normals));
     return results;
 }

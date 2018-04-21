@@ -61,6 +61,8 @@ struct Point {
 template <typename T>
 class PointCloud {
 public:
+    PointCloud() {};
+    PointCloud(const std::vector<Point>& points, const std::vector<Point>& normals);
     std::vector<T> x_vals;
     std::vector<T> y_vals;
     std::vector<T> z_vals;
@@ -73,6 +75,30 @@ public:
     void setNormals(std::vector<Point> normals);
 private:
 };
+
+
+template <typename T>
+PointCloud<T>::PointCloud(const std::vector<Point>& points, const std::vector<Point>& normals) {
+    assert(points.size() == normals.size());
+    size_t n = points.size();
+    x_vals.resize(n);
+    y_vals.resize(n);
+    z_vals.resize(n);
+
+    x_normals.resize(n);
+    y_normals.resize(n);
+    z_normals.resize(n);
+
+    for (size_t i = 0; i < n; ++i) {
+        x_vals[i] = points[i].x;
+        y_vals[i] = points[i].y;
+        z_vals[i] = points[i].z;
+
+        x_normals[i] = normals[i].x;
+        y_normals[i] = normals[i].y;
+        z_normals[i] = normals[i].z;
+    }
+}
 
 template <typename T>
 bool PointCloud<T>::saveAsPly(std::string filename) {

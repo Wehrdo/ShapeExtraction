@@ -14,7 +14,7 @@ PointCloud<float> DataIO::loadKitti(const std::string& filepath) {
 
     auto stream = std::fopen(filepath.c_str(), "rb");
     num = fread(data.get(), sizeof(float), num, stream) / 4;
-    num = 10000;
+    // num = 10000;
     float* px = data.get() + 0;
     float* py = data.get() + 1;
     float* pz = data.get() + 2;
