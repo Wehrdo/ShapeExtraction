@@ -2,7 +2,7 @@
 #include <chrono>
 
 #include "PointCloud.hpp"
-#include "KittiData.hpp"
+#include "DataIO.hpp"
 #include "RadixTree.hpp"
 #include "Octree.hpp"
 #include "NormalEstimation.hpp"
@@ -11,15 +11,8 @@ using std::cout;
 using std::endl;
 
 int main() {
-    auto cloud = KittiData::load("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin");
-    // test normals
-    std::vector<Point> normals(cloud.x_vals.size());
-    for (Point& p : normals) {
-        p.x = 1;
-    }
-    cloud.setNormals(normals);
-    auto success = cloud.saveAsPly("cloud.ply");
-    std::cout << "File out success = " << success << std::endl;
+    // auto cloud = DataIO::loadKitti("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin");
+    auto cloud = DataIO::loadObj("../../data/test_cube.obj");
 
     auto start_time = std::chrono::high_resolution_clock::now();
     RT::RadixTree radix_tree(cloud);
@@ -45,10 +38,13 @@ int main() {
     //     std::cout << std::endl;
     // }
 
-    auto results = NormalEstimation::estimateNormals<3>(octree, search_pts);
-    for (const auto& pt : results) {
-        std::cout << pt.x << ", " << pt.y << ", " << pt.z << std::endl;
-    }
+    auto normals = NormalEstimation::estimateNormals<8>(octree);
+    // for (const auto& pt : normals) {
+    //     std::cout << pt.x << ", " << pt.y << ", " << pt.z << std::endl;
+    // }
+
+    cloud.setNormals(normals);
+    cloud.saveAsPly("cloud.ply");
 
     // cloud.saveAsPly("kitti0.ply");
 

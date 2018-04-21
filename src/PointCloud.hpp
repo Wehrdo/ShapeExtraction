@@ -27,6 +27,10 @@ struct Point {
         float z_diff = p1.z - p2.z;
         return x_diff*x_diff + y_diff*y_diff + z_diff*z_diff;
     }
+    
+    POINT_LOC_PREFIX float dot(const Point& other) const {
+        return x*other.x + y*other.y + z*other.z;
+    }
 
     POINT_LOC_PREFIX Point& operator+=(const Point& rhs) {
         x += rhs.x;
@@ -35,7 +39,7 @@ struct Point {
         return *this;
     }
 
-    POINT_LOC_PREFIX friend Point operator+(Point lhs, const Point rhs) {lhs += rhs; return lhs;}
+    POINT_LOC_PREFIX friend Point operator+(Point lhs, const Point& rhs) {lhs += rhs; return lhs;}
 
     POINT_LOC_PREFIX Point& operator/=(const float rhs) {
         x /= rhs;
@@ -44,6 +48,14 @@ struct Point {
         return *this;
     }
 
+    POINT_LOC_PREFIX Point& operator-=(const Point& rhs) {
+        x -= rhs.x;
+        y -= rhs.y;
+        z -= rhs.z;
+        return *this;
+    }
+
+    POINT_LOC_PREFIX friend Point operator-(Point lhs, const Point& rhs) {lhs -= rhs; return lhs;}
 };
 
 template <typename T>

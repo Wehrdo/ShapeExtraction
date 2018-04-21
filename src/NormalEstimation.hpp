@@ -4,12 +4,16 @@
 #include "Octree.hpp"
 #include "CudaCommon.hpp"
 
+#include <cuda_runtime.h>
+#include <cusolverDn.h>
+
 #include <tuple>
+#include <cmath>
 
 class NormalEstimation {
 public:
     template <int k>
-    static std::vector<Point> estimateNormals(const OT::Octree& octree, const std::vector<Point>& points);
+    static std::vector<Point> estimateNormals(const OT::Octree& octree);
 };
 
 // to save typing
@@ -28,61 +32,61 @@ __device__ inline float sqr(float val) {
 */
 
 
-// Computes determinant of symmetrical matrix
-__device__ inline float calcDeterminant(const float M_u[6]) {
-    const float a, b, c, d, e, f;
-    a = M_u[0]; d = M_u[1]; e = M_u[2];
-                b = M_u[3]; f = M_u[4];
-                            c = M_u[5];
-    return a*(b*c - f*f)
-         - d*(d*c - e*f)
-         + e*(d*f - e*b);
-}
+// // Computes determinant of symmetrical matrix
+// __device__ inline float calcDeterminant(const float M_u[6]) {
+//     const float a, b, c, d, e, f;
+//     a = M_u[0]; d = M_u[1]; e = M_u[2];
+//                 b = M_u[3]; f = M_u[4];
+//                             c = M_u[5];
+//     return a*(b*c - f*f)
+//          - d*(d*c - e*f)
+//          + e*(d*f - e*b);
+// }
 
-// algorithm is from https://en.wikipedia.org/wiki/Eigenvalue_algorithm#3%C3%973_matrices
-// call input matrix A
-__device__ inline void eigenValues(float eVals[3], const float cov_upper[6]) {
-    float p1 = sqr(cov_upper[1]) + sqr(cov_upper[2]) + sqr(cov_upper[4]);
-    // TODO: Is this check necessary? Will the algorithm still compute correctly when diagonal? Are there potentially numerical stability issues when almost diagonal?
-    if (p1 == 0) {
-        // matrix is diagonal, so no covariance, and diagonals are eigenvalues!
-        eVals[0] = cov_upper[0];
-        eVals[1] = cov_upper[3];
-        eVals[2] = cov_upper[5];
-        return;
-    }
-    float trace = cov_upper[0] + cov_upper[3] + cov_upper[5];
-    float q = trace / 3;
+// // algorithm is from https://en.wikipedia.org/wiki/Eigenvalue_algorithm#3%C3%973_matrices
+// // call input matrix A
+// __device__ inline void eigenValues(float eVals[3], const float cov_upper[6]) {
+//     float p1 = sqr(cov_upper[1]) + sqr(cov_upper[2]) + sqr(cov_upper[4]);
+//     // TODO: Is this check necessary? Will the algorithm still compute correctly when diagonal? Are there potentially numerical stability issues when almost diagonal?
+//     if (p1 == 0) {
+//         // matrix is diagonal, so no covariance, and diagonals are eigenvalues!
+//         eVals[0] = cov_upper[0];
+//         eVals[1] = cov_upper[3];
+//         eVals[2] = cov_upper[5];
+//         return;
+//     }
+//     float trace = cov_upper[0] + cov_upper[3] + cov_upper[5];
+//     float q = trace / 3;
 
-    // float p2 = sqr(cov_upper[0] - q) + sqr(cov_upper[3] - q) + sqr(cov_upper[5] - q) + 2 * p1;
-    // float p = sqrt(p2);
-    // specialized CUDA function for this
-    float p = norm4df(cov_upper[0] - q, cov_upper[3] - q, cov_upper[5] - q, 2 * p1);
+//     // float p2 = sqr(cov_upper[0] - q) + sqr(cov_upper[3] - q) + sqr(cov_upper[5] - q) + 2 * p1;
+//     // float p = sqrt(p2);
+//     // specialized CUDA function for this
+//     float p = norm4df(cov_upper[0] - q, cov_upper[3] - q, cov_upper[5] - q, 2 * p1);
 
-    // B = A - q*I (where I is identity)
-    float B_fac = 1 / p;
-    float B[6] = {B_fac*(cov_upper[0]-q), B_fac*cov_upper[1],     B_fac*cov_upper[2],
-                                          B_fac*(cov_upper[3]-q), B_fac*cov_upper[4],
-                                                                  B_fac*(cov_upper[5] - q)};
-    float r = calcDeterminant(B);
+//     // B = A - q*I (where I is identity)
+//     float B_fac = 1 / p;
+//     float B[6] = {B_fac*(cov_upper[0]-q), B_fac*cov_upper[1],     B_fac*cov_upper[2],
+//                                           B_fac*(cov_upper[3]-q), B_fac*cov_upper[4],
+//                                                                   B_fac*(cov_upper[5] - q)};
+//     float r = calcDeterminant(B);
     
-    float pi = M_PI; // be sure to use float
-    float phi;
-    if (r <= -1) {
-        phi = pi / 3;
-    }
-    else if (r >= 1) {
-        phi = 0;
-    }
-    else {
-        phi = acosf(r) / 3;
-    }
+//     float pi = M_PI; // be sure to use float
+//     float phi;
+//     if (r <= -1) {
+//         phi = pi / 3;
+//     }
+//     else if (r >= 1) {
+//         phi = 0;
+//     }
+//     else {
+//         phi = acosf(r) / 3;
+//     }
 
-    // the eigenvalues satisfy eig3 <= eig2 <= eig1
-    eVals[0] = q + 2 * p * cosf(phi);
-    eVals[2] = q + 2 * p * cosf(phi + (2*pi / 3));
-    eVals[1] = 3 * q - eVals[0] - eVals[2]; // Because trace(A) = eig1 + eig2 + eig3
-}
+//     // the eigenvalues satisfy eig3 <= eig2 <= eig1
+//     eVals[0] = q + 2 * p * cosf(phi);
+//     eVals[2] = q + 2 * p * cosf(phi + (2*pi / 3));
+//     eVals[1] = 3 * q - eVals[0] - eVals[2]; // Because trace(A) = eig1 + eig2 + eig3
+// }
 
 // points is all points
 // pt_indices is the nearest neighbor indices for this point (points[pt_indices[0]]) is closest point
@@ -112,9 +116,10 @@ __device__ inline void calculateCovariance(float cov_upper[6], const Point* poin
     }
 }
 
+// populates covars with N 3x3 covariance matrices, using the nearest neighbors
 template <int k>
-__global__ void estimateNormalsKernel(
-    Point* normals,
+__global__ void findCovariancesKernel(
+    float* covars,
     const Point* points,
     const int* nn_indices,
     const int N
@@ -123,38 +128,179 @@ __global__ void estimateNormalsKernel(
     if (idx >= N) { return; }
     
     const int nn_idx = idx * k;
+    // calculate in local memory
     float cov_upper[6] = {0};
-    calculateCovariance(cov_upper, points, &nn_indices[nn_idx]);
+    calculateCovariance<k>(cov_upper, points, &nn_indices[nn_idx]);
 
+    // copy local memory into global array
 
-    normals[idx] = centroid;
+    // start of this matrix
+    float* cov_M = &covars[3 * 3 * idx];
+
+    // TODO: It might not be necessary to populate entire 3x3. check documentation for parameter A of cuSolver call. Probably can't memcpy unless we store cov_upper in column-major, I think (need to verify this)
+    // cov_M is technically in column-major, but because of symmetry, doesn't matter
+    cov_M[0] = cov_upper[0];
+    cov_M[1] = cov_upper[1];
+    cov_M[2] = cov_upper[2];
+
+    cov_M[3] = cov_upper[1];
+    cov_M[4] = cov_upper[3];
+    cov_M[5] = cov_upper[4];
+
+    cov_M[6] = cov_upper[2];
+    cov_M[7] = cov_upper[4];
+    cov_M[8] = cov_upper[5];
+} 
+
+// takes cross product of two largest eigenvectors (representing the plane) to compute normal
+// assuming eigen is an array of packed 3x3 matrices in column-major order, sorted by largest eigenvectors
+__global__ void normalsFromEigenVectors(
+    Point* normals,
+    const float* eigen,
+    const Point* points,
+    const Point viewpoint,
+    const int N
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N) { return; }
+
+    // // second-largest eigenvector
+    // const float* vec2 = &eigen[idx * 3 * 3 + 3];
+    // Point norm;
+    // norm.x = vec1[1]*vec2[2] - vec1[2]*vec2[1];
+    // norm.y = vec1[2]*vec2[0] - vec1[0]*vec2[2];
+    // norm.z = vec1[0]*vec2[1] - vec1[1]*vec2[0];
+
+    // smallest eigenvector
+    const float* vec = &eigen[idx * 3 * 3];
+    Point norm(vec[0], vec[1], vec[2]);
+
+    // normalize vector
+    norm /= norm3df(norm.x, norm.y, norm.z);
+
+    Point point = points[idx];
+    if ((viewpoint - point).dot(norm) < 0) {
+        norm.x *= -1;
+        norm.y *= -1;
+        norm.z *= -1;
+    }
+    
+    normals[idx] = norm;
 }
-
 /*
-  // --- Class template implementations ---
+// --- Class template implementations ---
 */
 template <int k>
-std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree, const std::vector<Point>& points) {
-    // first find nearest neighbors
-    const int n = static_cast<int>(points.size());
-    assert(points.size() <= std::numeric_limits<decltype(n)>::max());
-
+std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree) {
+    int n = octree.n_pts;
     // nearest neighbors in unified memory
     int* u_nn;
     CudaCheckCall(cudaMallocManaged(&u_nn, n * k * sizeof(*u_nn)));
-    // normals in unified memory
-    Point* u_normals;
-    CudaCheckCall(cudaMallocManaged(&u_normals, n * k * sizeof(*u_normals)));
 
-    octree.deviceKnnSearch<k>(points, u_nn, 0.01f);
+    octree.deviceKnnSearch<k>(octree.u_points, u_nn, n, 0.01f);
+
+    // matrix for covariances
+    const int lda = 3; // leading dimension size
+    const int m = 3; // other dimension size
+    const int batch_size = n;
+    float* u_C;
+    CudaCheckCall(cudaMallocManaged(&u_C, lda * m * batch_size * sizeof(*u_C)));
 
     int blocks, tpb;
     std::tie(blocks, tpb) = makeLaunchParams(n);
 
     // TODO: It might be more efficient to actually copy the points instead of passing the indices,
     // to increase memory access cohesion. It's only 3x the memory
-    estimateNormalsKernel<k><<<blocks, tpb>>>(u_normals, octree.u_points, u_nn, n);
+    findCovariancesKernel<k><<<blocks, tpb>>>(u_C, octree.u_points, u_nn, n);
 
+    cudaDeviceSynchronize();
+    CudaCheckError();
+
+    // calculate eigenvalues and eigenvectors using cuSolver
+    cusolverDnHandle_t cusolverH = NULL;
+    cudaStream_t stream = NULL;
+    syevjInfo_t syevj_params = NULL;
+
+    cusolverStatus_t status = CUSOLVER_STATUS_SUCCESS;
+
+    // holds resulting eigenvalues
+    float* u_W;
+    CudaCheckCall(cudaMallocManaged(&u_W, m * batch_size * sizeof(*u_W)));
+    // see documentation for more info, but if solve_info[i] == 0, then solving matrix i was successful
+    int* u_solve_info;
+    CudaCheckCall(cudaMallocManaged(&u_solve_info, batch_size * sizeof(*u_solve_info)));
+    // temporary workspace memory for cuSolver
+    int temp_work_size = 0;
+    float* d_temp_work = NULL;
+
+    // parameters of syevj
+    const float tol = 1.e-7; // tolerance I guess?
+    const int max_sweeps = 15;
+    const int sort_eig = 1; // sort the eigenvalues in ascending order
+    const cusolverEigMode_t jobz = CUSOLVER_EIG_MODE_VECTOR; // Can be CUSOLVER_EIG_MODE_VECTOR or CUSOLVER_EIG_MODE_NOVECTOR. We want vectors reported
+    const cublasFillMode_t uplo = CUBLAS_FILL_MODE_UPPER; // I think that means just the uppper-triangular values need to be there
+
+    // setup cusolver with parameters
+    CusolverCheckCall(cusolverDnCreate(&cusolverH));
+    CudaCheckCall(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking)); // why do we have to make a new stream?
+    CusolverCheckCall(cusolverDnSetStream(cusolverH, stream));
+    // get default params
+    CusolverCheckCall(cusolverDnCreateSyevjInfo(&syevj_params));
+    // set custom params
+    CusolverCheckCall(cusolverDnXsyevjSetTolerance(syevj_params, tol));
+    CusolverCheckCall(cusolverDnXsyevjSetMaxSweeps(syevj_params, max_sweeps));
+    CusolverCheckCall(cusolverDnXsyevjSetSortEig(syevj_params, sort_eig));
+
+    // get amount of temp memory required
+    CusolverCheckCall(cusolverDnSsyevjBatched_bufferSize(
+        cusolverH,
+        jobz,
+        uplo,
+        m,
+        u_C,
+        lda,
+        u_W,
+        &temp_work_size,
+        syevj_params,
+        batch_size
+    ));
+
+    // allocate temp memory
+    CudaCheckCall(cudaMalloc(&d_temp_work, temp_work_size * sizeof(*d_temp_work)));
+
+    // run solver
+    CusolverCheckCall(cusolverDnSsyevjBatched(
+        cusolverH,
+        jobz,
+        uplo,
+        m,
+        u_C,
+        lda,
+        u_W,
+        d_temp_work,
+        temp_work_size,
+        u_solve_info,
+        syevj_params,
+        batch_size
+    ));
+    cudaDeviceSynchronize();
+    CudaCheckError();
+
+    // for (int i = 0; i < n; ++i) {
+    //     if (u_solve_info[i] > 0) {
+    //         printf("Matrix %d does not converge: %d\n", i, u_solve_info[i]);
+    //     }
+    //     if (u_solve_info[i] < 0) {
+    //         printf("Matrix %d has wrong parameter %d\n", i, -u_solve_info[i]);
+    //     }
+    // }
+    
+    // the location of the viewpoint points were captured from, for orienting normals
+    Point viewpoint(0, 0, 0);
+    // normals in unified memory
+    Point* u_normals;
+    CudaCheckCall(cudaMallocManaged(&u_normals, n * sizeof(*u_normals)));
+    normalsFromEigenVectors<<<blocks, tpb>>>(u_normals, u_C, octree.u_points, viewpoint, n);
     cudaDeviceSynchronize();
     CudaCheckError();
 

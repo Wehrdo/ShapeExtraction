@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <cusolverDn.h>
 #include <utility>
 #include <tuple>
+#include <string>
 
 /*
  * From https://codeyarns.com/2011/03/02/how-to-do-error-checking-in-cuda/
@@ -15,6 +17,7 @@
 // #endif
 
 #define CudaCheckCall( err ) __cudaSafeCall( err, __FILE__, __LINE__ )
+#define CusolverCheckCall( err ) __cusolverSafeCall( err, __FILE__, __LINE__ )
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 
 inline void __cudaSafeCall( cudaError err, const char *file, const int line )
@@ -24,6 +27,22 @@ inline void __cudaSafeCall( cudaError err, const char *file, const int line )
     {
         fprintf( stderr, "cudaCheckCall() failed at %s:%i : %s\n",
                  file, line, cudaGetErrorString( err ) );
+        // exit( -1 );
+    }
+#endif
+
+    return;
+}
+
+std::string getCusolverErrorString(const cusolverStatus_t err);
+
+inline void __cusolverSafeCall( cusolverStatus_t err, const char *file, const int line )
+{
+#ifndef NDEBUG
+    if ( CUSOLVER_STATUS_SUCCESS != err )
+    {
+        fprintf( stderr, "CusolverCheckCall() failed at %s:%i : %s\n",
+                 file, line, getCusolverErrorString( err ).c_str() );
         // exit( -1 );
     }
 #endif

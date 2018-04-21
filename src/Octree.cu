@@ -268,6 +268,7 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     CudaCheckCall(cudaFree(rt_edge_counts));
     CudaCheckCall(cudaFree(oc_node_offsets));
 
+    n_pts = radix_tree.n_pts;
     // decode points for use later
     CudaCheckCall(cudaMallocManaged(&u_points, radix_tree.n_pts * sizeof(*u_points)));
     std::tie(blocks, tpb) = makeLaunchParams(radix_tree.n_pts);
@@ -279,14 +280,13 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     cudaDeviceSynchronize();
     CudaCheckError();
     // copy them to host memory, too
-    h_points = new Point[radix_tree.n_pts];
-    CudaCheckCall(cudaMemcpy(h_points, u_points, radix_tree.n_pts * sizeof(*h_points), cudaMemcpyDeviceToHost));
+    h_points.resize(radix_tree.n_pts);
+    CudaCheckCall(cudaMemcpy(&h_points[0], u_points, radix_tree.n_pts * sizeof(h_points[0]), cudaMemcpyDeviceToHost));
 }
 
 Octree::~Octree() {
     CudaCheckCall(cudaFree(nodes));
     CudaCheckCall(cudaFree(u_points));
-    delete h_points;
 }
 
 // returns the closest possible distance between query_pt and any potential point in node
