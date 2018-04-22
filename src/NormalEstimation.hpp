@@ -93,7 +93,7 @@ __device__ inline float sqr(float val) {
 template <int k>
 __device__ inline void calculateCovariance(float cov_upper[6], const Point* points, const int pt_indices[k]) {
     // find centroid of points
-    Point centroid;
+    Point centroid(0, 0, 0);
     for (int i = 0; i < k; ++i) {
         centroid += points[pt_indices[i]];
     }
@@ -221,8 +221,6 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree) {
     cusolverDnHandle_t cusolverH = NULL;
     cudaStream_t stream = NULL;
     syevjInfo_t syevj_params = NULL;
-
-    cusolverStatus_t status = CUSOLVER_STATUS_SUCCESS;
 
     // holds resulting eigenvalues
     float* u_W;

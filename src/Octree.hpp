@@ -5,6 +5,8 @@
 #include "CudaCommon.hpp"
 #include "dequeue.hpp"
 
+#include <mpi.h>
+
 #include <array>
 #include <vector>
 #include <tuple>
@@ -14,7 +16,7 @@ namespace OT {
 constexpr static int SEARCH_Q_SIZE = 32;
 
 struct OTNode {
-    int parent;
+    // int parent;
     // TODO: This is overkill number of pointers
     int children[8];
 
@@ -39,12 +41,50 @@ struct OTNode {
     //     leaf: index of point that will become the leaf child
     //     my_child_idx; which of my children it will be [0-7]
     __device__ void setLeaf(const int leaf, const int my_child_idx);
+
+    static MPI_Datatype getMpiDatatype() {
+        static bool mpi_datatype_initialized = 0;
+        if (!mpi_datatype_initialized) {
+            static_assert(std::is_standard_layout<OTNode>::value, "OTNode is not standard layout");
+            constexpr int n_elems = 5;
+            const int block_lengths[n_elems] = {8, 1, 1, 1, 1};
+            const MPI_Aint displacements[n_elems] = {offsetof(OTNode, children),
+                                                     offsetof(OTNode, corner),
+                                                     offsetof(OTNode, cell_size),
+                                                     offsetof(OTNode, child_node_mask),
+                                                     offsetof(OTNode, child_leaf_mask),
+                                                     };
+            const MPI_Datatype types[n_elems] = {MPI_INT,
+                                                 Point::getMpiDatatype(),
+                                                 MPI_FLOAT,
+                                                 MPI_INT,
+                                                 MPI_INT};
+            MPI_Type_create_struct(
+                n_elems,
+                block_lengths,
+                displacements,
+                types,
+                &mpi_datatype
+            );
+            mpi_datatype_initialized = 1;
+        }
+        return mpi_datatype;
+    }
+private:
+    static MPI_Datatype mpi_datatype;
 };
 
 class Octree {
 public:
+    Octree() {};
+    // Constructor for building octree from radix tree
     Octree(const RT::RadixTree& radix_tree);
+    // Constructor for making octree from given host data (For passing Octree via MPI)
+    Octree(const OTNode* _nodes, const int n_onodes, const Point* _points, const int n_pts, const Code_t prefix);
     ~Octree();
+    // move assignment operator
+    Octree& operator=(Octree&& other);
+
     template <int k>
     std::vector<std::array<int, k>> knnSearch(const std::vector<Point>& points, const float eps=0.01) const;
 
@@ -54,18 +94,21 @@ public:
 
     int n_pts;
     // points, as points converted back from morton codes (in unified memory)
-    Point* u_points;
+    Point* u_points = nullptr;
 
     // points in host memory
     std::vector<Point> h_points;
+
+    // numer of ofctree nodes
+    int n_nodes;
+    // the octree
+    OTNode* u_nodes = nullptr;
 private:
     // caching device allocator for CUB temporary storage
     cub::CachingDeviceAllocator g_allocator;
 
-    // the octree
-    OTNode* nodes;
     // prefix for the root node
-    Code_t root_prefix;
+    // Code_t root_prefix;
 };
 
 /*
@@ -141,9 +184,10 @@ __global__ void knnSearchKernel(
 */
 template <int k>
 void Octree::deviceKnnSearch(const Point* d_query, int* d_nn_indices, const int N, const float eps) const {
+    assert(u_nodes != nullptr && u_points != nullptr);
     int blocks, tpb;
     std::tie(blocks, tpb) = makeLaunchParams(N);
-    knnSearchKernel<k><<<blocks, tpb>>>(nodes,
+    knnSearchKernel<k><<<blocks, tpb>>>(u_nodes,
                                   u_points,
                                   d_query,
                                   d_nn_indices,
@@ -155,6 +199,7 @@ void Octree::deviceKnnSearch(const Point* d_query, int* d_nn_indices, const int 
 
 template <int k>
 std::vector<std::array<int, k>> Octree::knnSearch(const std::vector<Point>& points, const float eps) const {
+    assert(u_nodes != nullptr && u_points != nullptr);
     const int n = static_cast<int>(points.size());
     assert(points.size() <= std::numeric_limits<decltype(n)>::max());
 

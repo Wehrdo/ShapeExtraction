@@ -134,7 +134,7 @@ __global__ void makeNodes(
             int child_idx = node_prefix & 0b111;
             int parent = oct_idx + 1;
             nodes[parent].setChild(oct_idx, child_idx);
-            nodes[oct_idx].parent = parent;
+            // nodes[oct_idx].parent = parent;
             // calculate corner point
             //   (less significant bits have already been shifted off)
             nodes[oct_idx].corner = codeToPoint(node_prefix << (CODE_LEN - (3 * level)), min_coord, range);
@@ -152,7 +152,7 @@ __global__ void makeNodes(
             Code_t top_node_prefix = codes[i] >> (CODE_LEN - (3 * top_level));
             int child_idx = top_node_prefix & 0b111;
             nodes[oct_parent].setChild(oct_idx, child_idx);
-            nodes[oct_idx].parent = oct_parent;
+            // nodes[oct_idx].parent = oct_parent;
             // set corner point
             nodes[oct_idx].corner = codeToPoint(top_node_prefix << (CODE_LEN - (3 * top_level)), min_coord, range);
             nodes[oct_idx].cell_size = range / static_cast<float>(1 << (top_level - root_level));
@@ -174,6 +174,22 @@ void checkTree(const Code_t prefix, int code_len, const OTNode* nodes, const int
                 }
             }
     }
+}
+
+Octree& Octree::operator=(Octree&& other) {
+    if (this != &other) {
+        CudaCheckCall(cudaFree(u_points));
+        CudaCheckCall(cudaFree(u_nodes));
+        u_points = other.u_points;
+        u_nodes = other.u_nodes;
+        h_points = std::move(other.h_points);
+        n_pts = other.n_pts;
+        n_nodes = other.n_nodes;
+
+        other.u_points = nullptr;
+        other.u_nodes = nullptr;
+    }
+    return *this;
 }
 
 Octree::Octree(const RT::RadixTree& radix_tree) {
@@ -210,23 +226,23 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     CudaCheckError();
     g_allocator.DeviceFree(d_temp_storage);
 
-    auto n_oct_nodes = oc_node_offsets[radix_tree.n_nodes];
-    printf("total nodes: %d\n", n_oct_nodes);
+    n_nodes = oc_node_offsets[radix_tree.n_nodes];
+    printf("total nodes: %d\n", n_nodes);
 
-    CudaCheckCall(cudaMallocManaged(&nodes, n_oct_nodes * sizeof(*nodes)));
+    CudaCheckCall(cudaMallocManaged(&u_nodes, n_nodes * sizeof(*u_nodes)));
 
     // setup initial values of octree node objects
-    CudaCheckCall(cudaMemset(nodes, 0, n_oct_nodes * sizeof(*nodes)));
-    // std::tie(blocks, tpb) = makeLaunchParams(n_oct_nodes);
-    // initializeOTNodes<<<blocks, tpb>>>(nodes, n_oct_nodes);
+    CudaCheckCall(cudaMemset(u_nodes, 0, n_nodes * sizeof(*u_nodes)));
+    // std::tie(blocks, tpb) = makeLaunchParams(n_nodes);
+    // initializeOTNodes<<<blocks, tpb>>>(nodes, n_nodes);
 
     float tree_range = radix_tree.max_coord - radix_tree.min_coord;
     int root_level = radix_tree.d_tree.prefixN[0]/3;
     Code_t root_prefix = radix_tree.d_tree.mortonCode[0] >> (CODE_LEN - (3 * root_level));
-    nodes[0].corner = codeToPoint(root_prefix << (CODE_LEN - (3 * root_level)), radix_tree.min_coord, tree_range);
-    nodes[0].cell_size = tree_range;
+    u_nodes[0].corner = codeToPoint(root_prefix << (CODE_LEN - (3 * root_level)), radix_tree.min_coord, tree_range);
+    u_nodes[0].cell_size = tree_range;
     std::tie(blocks, tpb) = makeLaunchParams(radix_tree.n_nodes);
-    makeNodes<<<blocks, tpb>>>(nodes,
+    makeNodes<<<blocks, tpb>>>(u_nodes,
                                oc_node_offsets,
                                rt_edge_counts,
                                radix_tree.d_tree.mortonCode,
@@ -236,7 +252,7 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
                                tree_range,
                                radix_tree.n_nodes);
 
-    linkLeafNodes<<<blocks, tpb>>>(nodes,
+    linkLeafNodes<<<blocks, tpb>>>(u_nodes,
                                    oc_node_offsets,
                                    rt_edge_counts,
                                    radix_tree.d_tree.mortonCode,
@@ -249,10 +265,10 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     cudaDeviceSynchronize();
     CudaCheckError();
     // verify octree
-    checkTree(root_prefix, root_level*3, nodes, 0, radix_tree.d_tree.mortonCode);
+    // checkTree(root_prefix, root_level*3, u_nodes, 0, radix_tree.d_tree.mortonCode);
 
     // cudaDeviceSynchronize();
-    // for (int i = 0; i < n_oct_nodes; ++i) {
+    // for (int i = 0; i < n_nodes; ++i) {
     //     printf("Node %d:\n\tparent: %d\n\tchildren:\n", i, nodes[i].parent);
     //     for (int j = 0; j < 8; ++j) {
     //         if (nodes[i].child_node_mask & (1 << j)) {
@@ -285,7 +301,7 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
 }
 
 Octree::~Octree() {
-    CudaCheckCall(cudaFree(nodes));
+    CudaCheckCall(cudaFree(u_nodes));
     CudaCheckCall(cudaFree(u_points));
 }
 

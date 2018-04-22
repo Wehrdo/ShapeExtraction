@@ -1,9 +1,12 @@
 #pragma once
 
+#include <mpi.h>
+
 #include <vector>
 #include <iostream>
 #include <fstream>
 #include <cassert>
+#include <type_traits>
 
 
 // code location prefix. When compiling as CUDA, makes available on host and device
@@ -14,8 +17,9 @@
 #endif
 
 struct Point {
+    // Be warned, x, y, z are not initialized to 0 with default constructor
+    POINT_LOC_PREFIX Point() {};
     POINT_LOC_PREFIX Point(float x, float y, float z) : x(x), y(y), z(z) {}
-    POINT_LOC_PREFIX Point() : x(0), y(0), z(0) {}
 
     // members
     float x, y, z;
@@ -56,6 +60,34 @@ struct Point {
     }
 
     POINT_LOC_PREFIX friend Point operator-(Point lhs, const Point& rhs) {lhs -= rhs; return lhs;}
+
+    
+    static MPI_Datatype getMpiDatatype() {
+        static_assert(std::is_standard_layout<Point>::value, "Point is not standard layout");
+        static bool mpi_datatype_initialized = 0;
+        if (!mpi_datatype_initialized) {
+            constexpr int n_elems = 3;
+            const int block_lengths[n_elems] = {1, 1, 1};
+            const MPI_Aint displacements[n_elems] = {offsetof(Point, x),
+                                                     offsetof(Point, y),
+                                                     offsetof(Point, y),
+                                                    };
+            const MPI_Datatype types[n_elems] = {MPI_FLOAT,
+                                                 MPI_FLOAT,
+                                                 MPI_FLOAT};
+            MPI_Type_create_struct(
+                n_elems,
+                block_lengths,
+                displacements,
+                types,
+                &mpi_datatype
+            );
+            mpi_datatype_initialized = 1;
+        }
+        return mpi_datatype;
+    }
+private:
+    static MPI_Datatype mpi_datatype;
 };
 
 template <typename T>
