@@ -31,6 +31,13 @@ if(APPLE)
   set_property(TARGET shapes PROPERTY BUILD_RPATH ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
 endif()
 
+# Add MPI as a dependency
+find_package(MPI REQUIRED)
+set(CMAKE_CXX_COMPILE_FLAGS ${CMAKE_CXX_COMPILE_FLAGS} ${MPI_COMPILE_FLAGS})
+set(CMAKE_CXX_LINK_FLAGS ${CMAKE_CXX_LINK_FLAGS} ${MPI_LINK_FLAGS})
+include_directories(MPI_INCLUDE_PATH)
+target_link_libraries(shapes ${MPI_LIBRARIES}) 
+
 # OpenMP required for cuSolver
 find_package(OpenMP)
 if (OPENMP_FOUND)
@@ -41,15 +48,10 @@ endif()
 
 find_package(CUDALibs REQUIRED)
 # Link cuSolver and cuBLAS
-# target_link_libraries(shapes ${CUDA_cusolver_LIBRARY} ${CUDA_CUBLAS_LIBRARIES})
 # message(STATUS, ${CUDA_cusolver_LIBRARY})
 # message(STATUS, ${CUDA_CUBLAS_LIBRARIES})
-# find_library(CUBLAS_LIB cublas HINT ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
-# message(STATUS, ${CUBLAS_LIB})
-# target_link_libraries(shapes, cublas)
-# cuda_add_cublas_to_target(shapes)
 # target_link_libraries(shapes ${CUDA_cublas_LIBRARY} ${CUDA_cublas_device_LIBRARY})
 target_link_libraries(shapes ${CUDA_cublas_LIBRARY})
 target_link_libraries(shapes ${CUDA_cusolver_LIBRARY})
 
-list(APPEND CUDA_NVCC_FLAGS -lcublas_device)
+# list(APPEND CUDA_NVCC_FLAGS -lcublas_device)
