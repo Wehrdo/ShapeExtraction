@@ -16,9 +16,9 @@ private:
     __host__ __device__ void percolateDown(Q_Node<T> item, int idx);
     __host__ __device__ void percolateDownMin(Q_Node<T> item, int idx);
     __host__ __device__ void percolateDownMax(Q_Node<T> item, int idx);
-    __host__ __device__ void PriorityQueue::bubbleUp(int idx);
-    __host__ __device__ void PriorityQueue::bubbleUpMin(int idx);
-    __host__ __device__ void PriorityQueue::bubbleUpMax(int idx);
+    __host__ __device__ void bubbleUp(int idx);
+    __host__ __device__ void bubbleUpMin(int idx);
+    __host__ __device__ void bubbleUpMax(int idx);
     __host__ __device__ int parent(const int i) {
         return (i - 1) / 2;
     }
@@ -28,7 +28,7 @@ private:
     __host__ __device__ int childRight(const int i) {
         return 2 * i + 2;
     }
-    __host__ __device__ void PriorityQueue::swap(int idx1, int idx2);
+    __host__ __device__ void swap(int idx1, int idx2);
     __host__ __device__ int largest_idx();
 public:
     // Number of items contained
