@@ -14,6 +14,10 @@ target_include_directories(shapes PRIVATE cub)
 # will also build with -std=c++14
 target_compile_features(shapes PUBLIC cxx_std_14)
 
+# Optimization in release
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3")
+
 # set_target_properties(shapes PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CUDA_FLAGS "-arch=sm_35 --expt-relaxed-constexpr")
 # Device debug info in debug mode
