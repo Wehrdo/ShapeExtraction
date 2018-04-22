@@ -15,7 +15,7 @@ target_include_directories(shapes PRIVATE cub)
 target_compile_features(shapes PUBLIC cxx_std_14)
 
 # set_target_properties(shapes PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_CUDA_FLAGS "-arch=sm_61 --expt-relaxed-constexpr")
+set(CMAKE_CUDA_FLAGS "-arch=sm_35 --expt-relaxed-constexpr")
 # Device debug info in debug mode
 set(CMAKE_CUDA_FLAGS_DEBUG "-g -G")
 
