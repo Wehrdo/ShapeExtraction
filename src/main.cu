@@ -36,7 +36,9 @@ void bcastOctree(const int rank, OT::Octree& octree) {
     MPI_Bcast(&(*h_nodes)[0], n_nodes, OT::OTNode::getMpiDatatype(), 0, MPI_COMM_WORLD);
     MPI_Bcast(&(*h_points)[0], n_pts, Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
 
-    octree = OT::Octree(h_nodes, n_nodes, h_points, n_pts);
+    if (rank != 0) {
+        octree = OT::Octree(h_nodes, n_nodes, h_points, n_pts);
+    }
 
     // unneeded memory will be freed automatically, since we used shared pointers
 }

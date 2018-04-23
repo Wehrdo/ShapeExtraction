@@ -189,8 +189,6 @@ Octree::Octree(std::shared_ptr<std::vector<OTNode>> _nodes, const int _n_nodes, 
     // copy necessary data to GPU
     CudaCheckCall(cudaMemcpy(u_points, &(*h_points)[0], n_pts * sizeof(*u_points), cudaMemcpyHostToDevice));
     CudaCheckCall(cudaMemcpy(u_nodes, &(*_nodes)[0], n_nodes * sizeof(*u_nodes), cudaMemcpyHostToDevice));
-
-    // CudaCheckCall(cudaMemcpy(&(*h_points)[0], u_points, radix_tree.n_pts * sizeof(Point), cudaMemcpyDeviceToHost));
 }
 
 Octree& Octree::operator=(Octree&& other) {

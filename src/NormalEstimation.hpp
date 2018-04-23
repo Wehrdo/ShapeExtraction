@@ -294,14 +294,14 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree, i
     cudaDeviceSynchronize();
     CudaCheckError();
 
-    for (int i = 0; i < n; ++i) {
-        if (u_solve_info[i] > 0) {
-            printf("Matrix %d does not converge: %d\n", i, u_solve_info[i]);
-        }
-        if (u_solve_info[i] < 0) {
-            printf("Matrix %d has wrong parameter %d\n", i, -u_solve_info[i]);
-        }
-    }
+    // for (int i = 0; i < n; ++i) {
+    //     if (u_solve_info[i] > 0) {
+    //         printf("Matrix %d does not converge: %d\n", i, u_solve_info[i]);
+    //     }
+    //     if (u_solve_info[i] < 0) {
+    //         printf("Matrix %d has wrong parameter %d\n", i, -u_solve_info[i]);
+    //     }
+    // }
     CudaCheckCall(cudaFree(u_solve_info));
     CudaCheckCall(cudaFree(u_W));
     CudaCheckCall(cudaFree(d_temp_work));
