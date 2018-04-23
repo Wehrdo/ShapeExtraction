@@ -3,9 +3,11 @@
 #include "RadixTree.hpp"
 #include "Octree.hpp"
 #include "NormalEstimation.hpp"
+#include "CudaCommon.hpp"
 
 #include <mpi.h>
 
+#include <memory>
 #include <iostream>
 #include <chrono>
 
@@ -13,8 +15,26 @@ using std::cout;
 using std::endl;
 
 void bcastOctree(const int rank, OT::Octree& octree) {
-    int n_pts, n_onodes;
+    // broadcast number of points and nodes
+    int n_pts = octree.n_pts;
+    int n_nodes = octree.n_nodes;
+    MPI_Bcast(&n_pts, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&n_nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
+    // allocate points and nodes arrays on host
+    auto h_points = std::make_shared<std::vector<Point>>(n_pts);
+    auto h_nodes = std::make_shared<std::vector<OT::OTNode>>(n_nodes);
+    // copy nodes from device to host
+    if (rank == 0) {
+        CudaCheckCall(cudaMemcpy(&(*h_nodes)[0], octree.u_nodes, n_nodes * sizeof(*octree.u_nodes), cudaMemcpyDeviceToHost));
+        h_points = octree.h_points;
+    }
+    MPI_Bcast(&(*h_nodes)[0], n_nodes, OT::OTNode::getMpiDatatype(), 0, MPI_COMM_WORLD);
+    MPI_Bcast(&(*h_points)[0], n_pts, Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
+
+    octree = OT::Octree(h_nodes, n_nodes, h_points, n_pts);
+
+    // necessary memory will be freed automatically, since we used shared pointers
 }
 
 int main() {
@@ -24,6 +44,7 @@ int main() {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     OT::Octree octree;
+    // Only one node needs to compute the octree
     if (rank == 0) {
         // auto input_cloud = DataIO::loadKitti("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin");
         auto input_cloud = DataIO::loadObj("../../data/test_sphere.obj");

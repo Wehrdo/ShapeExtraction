@@ -7,6 +7,7 @@
 #include <fstream>
 #include <cassert>
 #include <type_traits>
+#include <memory>
 
 
 // code location prefix. When compiling as CUDA, makes available on host and device
@@ -64,7 +65,10 @@ struct Point {
     
     static MPI_Datatype getMpiDatatype() {
         static_assert(std::is_standard_layout<Point>::value, "Point is not standard layout");
+
         static bool mpi_datatype_initialized = 0;
+        static MPI_Datatype mpi_datatype;
+
         if (!mpi_datatype_initialized) {
             constexpr int n_elems = 3;
             const int block_lengths[n_elems] = {1, 1, 1};
@@ -86,15 +90,14 @@ struct Point {
         }
         return mpi_datatype;
     }
-private:
-    static MPI_Datatype mpi_datatype;
 };
 
 template <typename T>
 class PointCloud {
 public:
     PointCloud() {};
-    PointCloud(const std::vector<Point>& points, const std::vector<Point>& normals);
+    // PointCloud(const std::vector<Point>& points, const std::vector<Point>& normals);
+    PointCloud(const std::shared_ptr<const std::vector<Point>> points, const std::vector<Point>& normals);
     std::vector<T> x_vals;
     std::vector<T> y_vals;
     std::vector<T> z_vals;
@@ -110,9 +113,12 @@ private:
 
 
 template <typename T>
-PointCloud<T>::PointCloud(const std::vector<Point>& points, const std::vector<Point>& normals) {
+PointCloud<T>::PointCloud(const std::shared_ptr<const std::vector<Point>> points_ptr, const std::vector<Point>& normals) {
+    const auto& points = *points_ptr;
     assert(points.size() == normals.size());
+
     size_t n = points.size();
+
     x_vals.resize(n);
     y_vals.resize(n);
     z_vals.resize(n);

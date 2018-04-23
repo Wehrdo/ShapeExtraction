@@ -10,6 +10,7 @@
 #include <array>
 #include <vector>
 #include <tuple>
+#include <memory>
 
 // #define SEARCH_Q_SIZE (32)
 namespace OT {
@@ -43,9 +44,12 @@ struct OTNode {
     __device__ void setLeaf(const int leaf, const int my_child_idx);
 
     static MPI_Datatype getMpiDatatype() {
+        static_assert(std::is_standard_layout<OTNode>::value, "OTNode is not standard layout");
+
         static bool mpi_datatype_initialized = 0;
+        static MPI_Datatype mpi_datatype;
+
         if (!mpi_datatype_initialized) {
-            static_assert(std::is_standard_layout<OTNode>::value, "OTNode is not standard layout");
             constexpr int n_elems = 5;
             const int block_lengths[n_elems] = {8, 1, 1, 1, 1};
             const MPI_Aint displacements[n_elems] = {offsetof(OTNode, children),
@@ -70,8 +74,6 @@ struct OTNode {
         }
         return mpi_datatype;
     }
-private:
-    static MPI_Datatype mpi_datatype;
 };
 
 class Octree {
@@ -80,7 +82,7 @@ public:
     // Constructor for building octree from radix tree
     Octree(const RT::RadixTree& radix_tree);
     // Constructor for making octree from given host data (For passing Octree via MPI)
-    Octree(const OTNode* _nodes, const int n_onodes, const Point* _points, const int n_pts, const Code_t prefix);
+    Octree(std::shared_ptr<std::vector<OTNode>> _nodes, const int _n_nodes, std::shared_ptr<std::vector<Point>> _points, const int _n_pts);
     ~Octree();
     // move assignment operator
     Octree& operator=(Octree&& other);
@@ -97,7 +99,7 @@ public:
     Point* u_points = nullptr;
 
     // points in host memory
-    std::vector<Point> h_points;
+    std::shared_ptr<std::vector<Point>> h_points;
 
     // numer of ofctree nodes
     int n_nodes;

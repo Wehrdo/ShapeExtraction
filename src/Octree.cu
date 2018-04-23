@@ -176,16 +176,36 @@ void checkTree(const Code_t prefix, int code_len, const OTNode* nodes, const int
     }
 }
 
+Octree::Octree(std::shared_ptr<std::vector<OTNode>> _nodes, const int _n_nodes, std::shared_ptr<std::vector<Point>> _points, const int _n_pts) {
+    // copy trivial data
+    n_pts = _n_pts;
+    n_nodes = _n_nodes;
+    // caller is letting us take over h_points
+    h_points = _points;
+
+    // allocate device memory
+    CudaCheckCall(cudaMallocManaged(&u_points, n_pts * sizeof(*u_points)));
+    CudaCheckCall(cudaMallocManaged(&u_nodes, n_nodes * sizeof(*u_nodes)));
+    // copy necessary data to GPU
+    CudaCheckCall(cudaMemcpy(u_points, &(*h_points)[0], n_pts * sizeof(*u_points), cudaMemcpyHostToDevice));
+    CudaCheckCall(cudaMemcpy(u_nodes, &(*_nodes)[0], n_nodes * sizeof(*u_nodes), cudaMemcpyHostToDevice));
+
+    // CudaCheckCall(cudaMemcpy(&(*h_points)[0], u_points, radix_tree.n_pts * sizeof(Point), cudaMemcpyDeviceToHost));
+}
+
 Octree& Octree::operator=(Octree&& other) {
     if (this != &other) {
+        // free my memory
         CudaCheckCall(cudaFree(u_points));
         CudaCheckCall(cudaFree(u_nodes));
+        // copy other's pointers
         u_points = other.u_points;
         u_nodes = other.u_nodes;
         h_points = std::move(other.h_points);
+        // copy other's remaining data
         n_pts = other.n_pts;
         n_nodes = other.n_nodes;
-
+        // clear other's pointers
         other.u_points = nullptr;
         other.u_nodes = nullptr;
     }
@@ -296,8 +316,8 @@ Octree::Octree(const RT::RadixTree& radix_tree) {
     cudaDeviceSynchronize();
     CudaCheckError();
     // copy them to host memory, too
-    h_points.resize(radix_tree.n_pts);
-    CudaCheckCall(cudaMemcpy(&h_points[0], u_points, radix_tree.n_pts * sizeof(h_points[0]), cudaMemcpyDeviceToHost));
+    h_points = std::make_shared<std::vector<Point>>(radix_tree.n_pts);
+    CudaCheckCall(cudaMemcpy(&(*h_points)[0], u_points, radix_tree.n_pts * sizeof(*u_points), cudaMemcpyDeviceToHost));
 }
 
 Octree::~Octree() {
