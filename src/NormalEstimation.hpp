@@ -14,6 +14,8 @@ class NormalEstimation {
 public:
     template <int k>
     static std::vector<Point> estimateNormals(const OT::Octree& octree);
+    template <int k>
+    static std::vector<Point> estimateNormals(const OT::Octree& octree, const int start_idx, const int n);
 };
 
 // to save typing
@@ -192,12 +194,19 @@ __global__ void normalsFromEigenVectors(
 */
 template <int k>
 std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree) {
-    int n = octree.n_pts;
+    return estimateNormals<k>(octree, 0, octree.n_pts);
+}
+
+template <int k>
+std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree, int start_idx, int n) {
+    // the points to search
+    Point* search_pts = octree.u_points + start_idx;
+
     // nearest neighbors in unified memory
     int* u_nn;
     CudaCheckCall(cudaMallocManaged(&u_nn, n * k * sizeof(*u_nn)));
 
-    octree.deviceKnnSearch<k>(octree.u_points, u_nn, n, 0.01f);
+    octree.deviceKnnSearch<k>(search_pts, u_nn, n, 0.01f);
 
     // matrix for covariances
     const int lda = 3; // leading dimension size
@@ -302,7 +311,7 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree) {
     // normals in unified memory
     Point* u_normals;
     CudaCheckCall(cudaMallocManaged(&u_normals, n * sizeof(*u_normals)));
-    normalsFromEigenVectors<<<blocks, tpb>>>(u_normals, u_C, octree.u_points, viewpoint, n);
+    normalsFromEigenVectors<<<blocks, tpb>>>(u_normals, u_C, search_pts, viewpoint, n);
     cudaDeviceSynchronize();
     CudaCheckError();
 

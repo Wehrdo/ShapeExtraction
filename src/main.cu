@@ -30,6 +30,7 @@ void bcastOctree(const int rank, OT::Octree& octree) {
         h_points = octree.h_points;
     }
     else {
+        // only allocate new space of not rank 0, because rank 0 already has this allocated
         h_points = std::make_shared<std::vector<Point>>(n_pts);
     }
     MPI_Bcast(&(*h_nodes)[0], n_nodes, OT::OTNode::getMpiDatatype(), 0, MPI_COMM_WORLD);
@@ -37,7 +38,7 @@ void bcastOctree(const int rank, OT::Octree& octree) {
 
     octree = OT::Octree(h_nodes, n_nodes, h_points, n_pts);
 
-    // necessary memory will be freed automatically, since we used shared pointers
+    // unneeded memory will be freed automatically, since we used shared pointers
 }
 
 int main() {
@@ -62,28 +63,32 @@ int main() {
         octree = OT::Octree(radix_tree);
         end_time = std::chrono::high_resolution_clock::now();
         std::cout << "Octree construction took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
-
-        // std::vector<Point> search_pts({
-        //     // Point(50.7, 0.5, 1.9),
-        //     // Point(52, 0, 3),
-        //     // Point(50.583, 1.29, 1.92)
-        //     Point(1, 2, 3),
-        //     Point(-9, -1.3, -1.5),
-        //     Point(30, 5, 16)
-        // });
     }
 
     // Share constructed octree
     bcastOctree(rank, octree);
 
     auto start_time = std::chrono::high_resolution_clock::now();
-    auto normals = NormalEstimation::estimateNormals<8>(octree);
+    int total_pts = octree.n_pts;
+    std::vector<int> dist_counts(n_nodes);
+    int start_idx = 0;
+    for (int i = 0; i < n_nodes; ++i) {
+        dist_counts[i] = total_pts / n_nodes + (rank < total_pts % n_nodes);
+        if (rank > i) {
+            start_idx += dist_counts[i];
+        }
+    }
+    std::cout << "Node " << rank << " start = " << start_idx << ", n = " << dist_counts[rank] << std::endl;
+    auto local_normals = NormalEstimation::estimateNormals<8>(octree, start_idx, dist_counts[rank]);
     auto end_time = std::chrono::high_resolution_clock::now();
     std::cout << "Node " << rank << ": " << "Normal estimation took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
 
-    
-    PointCloud<float> output_cloud(octree.h_points, normals);
-    output_cloud.saveAsPly("cloud_" + std::to_string(rank) + ".ply");
+    std::vector<Point> all_normals(total_pts * (rank == 0));
+    MPI_Gather(&local_normals[0], dist_counts[rank], Point::getMpiDatatype(), &all_normals[0], total_pts, Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
+    if (rank == 0) {
+        PointCloud<float> output_cloud(octree.h_points, all_normals);
+        output_cloud.saveAsPly("cloud.ply");
+    }
 
     return MPI_Finalize();
 }
