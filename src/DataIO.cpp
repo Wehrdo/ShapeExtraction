@@ -1,14 +1,16 @@
 #include "DataIO.hpp"
 
+#include <limits>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <memory>
+#include <ios>
 
-PointCloud<float> DataIO::loadKitti(const std::string& filepath) {
+PointCloud<float> DataIO::loadKitti(const std::string& filepath, size_t num) {
     PointCloud<float> cloud;
 
-    size_t num = 1000000;
+    // size_t num = 1000000;
     // float* data = (float*)malloc(num * sizeof(float));
     std::unique_ptr<float> data(new float[num]);
 
@@ -31,6 +33,25 @@ PointCloud<float> DataIO::loadKitti(const std::string& filepath) {
     return cloud;
 }
 
+void DataIO::saveKitti(const PointCloud<float> cloud, const std::string& filepath) {
+    std::ofstream stream(filepath, std::ios::out | std::ios::binary);
+
+    // assert(4 * cloud.x_vals.size() <= std::numeric_limits<int32_t>::max());
+    // int32_t cloud_size = static_cast<int32_t>(cloud.x_vals.size()) * 4;
+    // stream.write((char*) &cloud_size, sizeof(cloud_size));
+
+
+    float reflectance = 255;
+    for (int i = 0; i < cloud.x_vals.size(); ++i) {
+        stream.write((char*) &cloud.x_vals[i], sizeof(float));
+        stream.write((char*) &cloud.y_vals[i], sizeof(float));
+        stream.write((char*) &cloud.z_vals[i], sizeof(float));
+        stream.write((char*) &reflectance, sizeof(float));
+    }
+
+    stream.close();
+}
+
 PointCloud<float> DataIO::loadObj(const std::string& filepath) {
     PointCloud<float> cloud;
 
@@ -49,6 +70,27 @@ PointCloud<float> DataIO::loadObj(const std::string& filepath) {
                 cloud.y_vals.push_back(y);
                 cloud.z_vals.push_back(z);
             }
+        }
+    }
+
+    return cloud;
+}
+
+PointCloud<float> DataIO::loadSemantic3D(const std::string& filepath) {
+    PointCloud<float> cloud;
+
+    std::ifstream file(filepath);
+    std::string line;
+    while (std::getline(file, line)) {
+        float x, y, z, r, g, b;
+        std::istringstream iss(line);
+        if (!(iss >> x >> y >> z >> r >> g >> b)) {
+            std::cout << "Failed to parse line " << line << std::endl;
+        }
+        else {
+            cloud.x_vals.push_back(x);
+            cloud.y_vals.push_back(y);
+            cloud.z_vals.push_back(z);
         }
     }
 

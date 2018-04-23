@@ -54,9 +54,15 @@ int main() {
     OT::Octree octree;
     // Only one node needs to compute the octree
     if (rank == 0) {
-        // auto input_cloud = DataIO::loadKitti("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin");
-        auto input_cloud = DataIO::loadObj("../../data/test_sphere.obj");
+        // auto input_cloud = DataIO::loadKitti("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin", 1000000);
+        // auto input_cloud = DataIO::loadObj("../../data/test_sphere.obj");
+        // auto input_cloud = DataIO::loadSemantic3D("../../data/semantic3d/stgallencathedral_station1_intensity_rgb.txt");
+        auto input_cloud = DataIO::loadKitti("../../data/semantic3d/cathedral1_kitti.bin", 124719076);
         std::cout << "Input data has " << input_cloud.x_vals.size() << " points" << std::endl;
+        // DataIO::saveKitti(input_cloud, "../../data/semantic3d/cathedral1_kitti.bin");
+        // auto reloaded = DataIO::loadKitti("../../data/semantic3d/cathedral1_kitti.bin");
+        // auto input_cloud = DataIO::loadKitti("../../data/semantic3d/cathedral1_kitti.bin");
+        // std::cout << "reloaded data has " << reloaded.x_vals.size() << " points" << std::endl;
 
         auto start_time = std::chrono::high_resolution_clock::now();
         RT::RadixTree radix_tree(input_cloud);
