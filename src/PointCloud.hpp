@@ -107,7 +107,7 @@ class PointCloud {
 public:
     PointCloud() {};
     // PointCloud(const std::vector<Point>& points, const std::vector<Point>& normals);
-    PointCloud(const std::shared_ptr<const std::vector<Point>> points, const std::vector<Point>& normals);
+    PointCloud(const std::shared_ptr<const std::vector<Point>>& points_ptr, const std::vector<Point>& normals);
     std::vector<T> x_vals;
     std::vector<T> y_vals;
     std::vector<T> z_vals;
@@ -123,7 +123,7 @@ private:
 
 
 template <typename T>
-PointCloud<T>::PointCloud(const std::shared_ptr<const std::vector<Point>> points_ptr, const std::vector<Point>& normals) {
+PointCloud<T>::PointCloud(const std::shared_ptr<const std::vector<Point>>& points_ptr, const std::vector<Point>& normals) {
     const auto& points = *points_ptr;
     assert(points.size() == normals.size());
 

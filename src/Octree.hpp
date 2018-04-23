@@ -74,7 +74,10 @@ struct OTNode {
 
             // account for potential padding in struct
             MPI_Aint lb, extent;
-            MPI_Type_get_extent(struct_type, &lb, &extent);
+            lb = 0;
+            extent = sizeof(OTNode);
+            // For some reason MPI_Type_get_extent returns lb=32, extent=12. That's incorrect, and I have no idea why it returns that.
+            // MPI_Type_get_extent(struct_type, &lb, &extent);
             MPI_Type_create_resized(struct_type, lb, extent, &mpi_datatype);
 
             // save datatype

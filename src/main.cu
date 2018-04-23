@@ -30,9 +30,11 @@ void bcastOctree(const int rank, OT::Octree& octree) {
         h_points = octree.h_points;
     }
     else {
-        // only allocate new space of not rank 0, because rank 0 already has this allocated
+        // only allocate new space if not rank 0, because rank 0 already has this allocated
         h_points = std::make_shared<std::vector<Point>>(n_pts);
     }
+
+
     MPI_Bcast(&(*h_nodes)[0], n_nodes, OT::OTNode::getMpiDatatype(), 0, MPI_COMM_WORLD);
     MPI_Bcast(&(*h_points)[0], n_pts, Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
 
@@ -72,21 +74,21 @@ int main() {
 
     auto start_time = std::chrono::high_resolution_clock::now();
     int total_pts = octree.n_pts;
-    std::vector<int> dist_counts(n_nodes);
-    int start_idx = 0;
+    std::vector<int> send_counts(n_nodes);
+    std::vector<int> displacements(n_nodes);
+    int cnt_so_far = 0;
     int n_extra = total_pts % n_nodes;
     for (int i = 0; i < n_nodes; ++i) {
-        dist_counts[i] = total_pts / n_nodes + (rank < n_extra);
-        if (rank > i) {
-            start_idx += dist_counts[i];
-        }
+        displacements[i] = cnt_so_far;
+        send_counts[i] = total_pts / n_nodes + (rank < n_extra);
+        cnt_so_far += send_counts[i];
     }
-    std::cout << "Node " << rank << " start = " << start_idx << ", n = " << dist_counts[rank] << std::endl;
-    auto local_normals = NormalEstimation::estimateNormals<8>(octree, start_idx, dist_counts[rank]);
+    std::cout << "Node " << rank << " start = " << displacements[rank] << ", n = " << send_counts[rank] << std::endl;
+    auto local_normals = NormalEstimation::estimateNormals<8>(octree, displacements[rank], send_counts[rank]);
     auto end_time = std::chrono::high_resolution_clock::now();
 
     std::vector<Point> all_normals(rank == 0 ? total_pts : 0);
-    MPI_Gather(&local_normals[0], dist_counts[rank], Point::getMpiDatatype(), rank == 0 ? &all_normals[0] : nullptr, total_pts, Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
+    MPI_Gatherv(&local_normals[0], send_counts[rank], Point::getMpiDatatype(), rank == 0 ? &all_normals[0] : nullptr, &send_counts[0], &displacements[0], Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
 
     auto total_time = std::chrono::high_resolution_clock::now() - start_time;
     std::cout << "Node " << rank << ": " << "Normal estimation took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
