@@ -81,11 +81,16 @@ int main() {
     std::cout << "Node " << rank << " start = " << start_idx << ", n = " << dist_counts[rank] << std::endl;
     auto local_normals = NormalEstimation::estimateNormals<8>(octree, start_idx, dist_counts[rank]);
     auto end_time = std::chrono::high_resolution_clock::now();
+
+    std::vector<Point> all_normals(rank == 0 ? total_pts : 0);
+    MPI_Gather(&local_normals[0], dist_counts[rank], Point::getMpiDatatype(), rank == 0 ? &all_normals[0] : nullptr, total_pts, Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
+
+    auto total_time = std::chrono::high_resolution_clock::now() - start_time;
     std::cout << "Node " << rank << ": " << "Normal estimation took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
 
-    std::vector<Point> all_normals(total_pts * (rank == 0));
-    MPI_Gather(&local_normals[0], dist_counts[rank], Point::getMpiDatatype(), &all_normals[0], total_pts, Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
     if (rank == 0) {
+        std::cout << "Total normal estimation time took " << std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count() << "ms" << std::endl;
+
         PointCloud<float> output_cloud(octree.h_points, all_normals);
         output_cloud.saveAsPly("cloud.ply");
     }
