@@ -8,6 +8,7 @@
 #include <cassert>
 #include <type_traits>
 #include <memory>
+#include <cstddef>
 
 
 // code location prefix. When compiling as CUDA, makes available on host and device
