@@ -74,18 +74,27 @@ struct Point {
             const int block_lengths[n_elems] = {1, 1, 1};
             const MPI_Aint displacements[n_elems] = {offsetof(Point, x),
                                                      offsetof(Point, y),
-                                                     offsetof(Point, y),
+                                                     offsetof(Point, z),
                                                     };
             const MPI_Datatype types[n_elems] = {MPI_FLOAT,
                                                  MPI_FLOAT,
                                                  MPI_FLOAT};
+            MPI_Datatype struct_type;
             MPI_Type_create_struct(
                 n_elems,
                 block_lengths,
                 displacements,
                 types,
-                &mpi_datatype
+                &struct_type
             );
+
+            // account for potential padding in struct
+            MPI_Aint lb, extent;
+            MPI_Type_get_extent(struct_type, &lb, &extent);
+            MPI_Type_create_resized(struct_type, lb, extent, &mpi_datatype);
+
+            // save datatype
+            MPI_Type_commit(&mpi_datatype);
             mpi_datatype_initialized = 1;
         }
         return mpi_datatype;

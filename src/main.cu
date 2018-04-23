@@ -22,12 +22,15 @@ void bcastOctree(const int rank, OT::Octree& octree) {
     MPI_Bcast(&n_nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     // allocate points and nodes arrays on host
-    auto h_points = std::make_shared<std::vector<Point>>(n_pts);
+    std::shared_ptr<std::vector<Point>> h_points;
     auto h_nodes = std::make_shared<std::vector<OT::OTNode>>(n_nodes);
     // copy nodes from device to host
     if (rank == 0) {
         CudaCheckCall(cudaMemcpy(&(*h_nodes)[0], octree.u_nodes, n_nodes * sizeof(*octree.u_nodes), cudaMemcpyDeviceToHost));
         h_points = octree.h_points;
+    }
+    else {
+        h_points = std::make_shared<std::vector<Point>>(n_pts);
     }
     MPI_Bcast(&(*h_nodes)[0], n_nodes, OT::OTNode::getMpiDatatype(), 0, MPI_COMM_WORLD);
     MPI_Bcast(&(*h_points)[0], n_pts, Point::getMpiDatatype(), 0, MPI_COMM_WORLD);
@@ -70,14 +73,17 @@ int main() {
         // });
     }
 
+    // Share constructed octree
+    bcastOctree(rank, octree);
+
     auto start_time = std::chrono::high_resolution_clock::now();
     auto normals = NormalEstimation::estimateNormals<8>(octree);
     auto end_time = std::chrono::high_resolution_clock::now();
-    std::cout << "Normal estimation took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
+    std::cout << "Node " << rank << ": " << "Normal estimation took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
 
     
     PointCloud<float> output_cloud(octree.h_points, normals);
-    output_cloud.saveAsPly("cloud.ply");
+    output_cloud.saveAsPly("cloud_" + std::to_string(rank) + ".ply");
 
     return MPI_Finalize();
 }
