@@ -18,6 +18,8 @@ target_compile_features(shapes PUBLIC cxx_std_14)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 set(CMAKE_CUDA_FLAGS_RELEASE "-O3")
 
+set(CMAKE_CXX_FLAGS_DEBUG "-G")
+
 # set_target_properties(shapes PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CUDA_FLAGS "-arch=sm_35 --expt-relaxed-constexpr")
 # Device debug info in debug mode

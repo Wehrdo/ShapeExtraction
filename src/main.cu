@@ -72,8 +72,9 @@ int main() {
     int total_pts = octree.n_pts;
     std::vector<int> dist_counts(n_nodes);
     int start_idx = 0;
+    int n_extra = total_pts % n_nodes;
     for (int i = 0; i < n_nodes; ++i) {
-        dist_counts[i] = total_pts / n_nodes + (rank < total_pts % n_nodes);
+        dist_counts[i] = total_pts / n_nodes + (rank < n_extra);
         if (rank > i) {
             start_idx += dist_counts[i];
         }
