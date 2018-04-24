@@ -228,7 +228,7 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree, i
 
     // calculate eigenvalues and eigenvectors using cuSolver
     cusolverDnHandle_t cusolverH = NULL;
-    cudaStream_t stream = NULL;
+    // cudaStream_t stream = 0;
     syevjInfo_t syevj_params = NULL;
 
     // holds resulting eigenvalues
@@ -250,8 +250,8 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree, i
 
     // setup cusolver with parameters
     CusolverCheckCall(cusolverDnCreate(&cusolverH));
-    CudaCheckCall(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking)); // why do we have to make a new stream?
-    CusolverCheckCall(cusolverDnSetStream(cusolverH, stream));
+    // CudaCheckCall(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking)); // why do we have to make a new stream?
+    // CusolverCheckCall(cusolverDnSetStream(cusolverH, stream));
     // get default params
     CusolverCheckCall(cusolverDnCreateSyevjInfo(&syevj_params));
     // set custom params
