@@ -9,6 +9,7 @@
 
 #include <tuple>
 #include <cmath>
+#include <chrono>
 
 class NormalEstimation {
 public:
@@ -206,7 +207,12 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree, i
     int* u_nn;
     CudaCheckCall(cudaMallocManaged(&u_nn, n * k * sizeof(*u_nn)));
 
+    auto start_time = std::chrono::high_resolution_clock::now();
     octree.deviceKnnSearch<k>(search_pts, u_nn, n, 0.01f);
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::cout << "For start_idx " << start_idx << ", knnSearch took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
+
+    start_time = std::chrono::high_resolution_clock::now();
 
     // matrix for covariances
     const int lda = 3; // leading dimension size
@@ -305,7 +311,10 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree, i
     CudaCheckCall(cudaFree(u_solve_info));
     CudaCheckCall(cudaFree(u_W));
     CudaCheckCall(cudaFree(d_temp_work));
+    end_time = std::chrono::high_resolution_clock::now();
+    std::cout << "For start_idx " << start_idx << ", eigenvector calculation took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
     
+    start_time = std::chrono::high_resolution_clock::now();
     // the location of the viewpoint points were captured from, for orienting normals
     Point viewpoint(0, 0, 0);
     // normals in unified memory
@@ -320,5 +329,7 @@ std::vector<Point> NormalEstimation::estimateNormals(const OT::Octree& octree, i
     std::vector<Point> results(n);
     CudaCheckCall(cudaMemcpy(&results[0], u_normals, n * sizeof(*u_normals), cudaMemcpyDeviceToHost));
     CudaCheckCall(cudaFree(u_normals));
+    end_time = std::chrono::high_resolution_clock::now();
+    std::cout << "For start_idx " << start_idx << ", normal kernel took " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << "ms" << std::endl;
     return results;
 }
