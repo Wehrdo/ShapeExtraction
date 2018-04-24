@@ -4,6 +4,9 @@
 
 class DataIO {
 public:
+    // loads a file dependent upon its file extension
+    static PointCloud<float> loadFile(const std::string& filepath);
+
     // loads binary Kitti point clouds num is maximum number of floats to read (4 * number of points)
     static PointCloud<float> loadKitti(const std::string& filepath, size_t num);
     // saves a point cloud as Kitti format. Convenient, because it's binary

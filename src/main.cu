@@ -46,10 +46,15 @@ void bcastOctree(const int rank, OT::Octree& octree) {
     // unneeded memory will be freed automatically, since we used shared pointers
 }
 
+
 int main(int argc, char* argv[]) {
     std::string out_file_name("cloud.ply");
+    std::string in_file_name("../../data/semantic3d/cathedral1_kitti.bin");
     if (argc > 1) {
         out_file_name = std::string(argv[1]);
+    }
+    if (argc > 2) {
+        in_file_name = std::string(argv[2]);
     }
 
     MPI_Init(NULL, NULL);
@@ -60,10 +65,11 @@ int main(int argc, char* argv[]) {
     OT::Octree octree;
     // Only one node needs to compute the octree
     if (rank == 0) {
+        auto input_cloud = DataIO::loadFile(in_file_name);
         // auto input_cloud = DataIO::loadKitti("../../data/kitti/2011_09_26/2011_09_26_drive_0002_sync/velodyne_points/data/0000000000.bin", 1000000);
         // auto input_cloud = DataIO::loadObj("../../data/test_sphere.obj");
         // auto input_cloud = DataIO::loadSemantic3D("../../data/semantic3d/stgallencathedral_station1_intensity_rgb.txt");
-        auto input_cloud = DataIO::loadKitti("../../data/semantic3d/cathedral1_kitti.bin", 124719076);
+        // auto input_cloud = DataIO::loadKitti("../../data/semantic3d/cathedral1_kitti.bin", 124719076);
         std::cout << "Input data has " << input_cloud.x_vals.size() << " points" << std::endl;
         // DataIO::saveKitti(input_cloud, "../../data/semantic3d/cathedral1_kitti.bin");
         // auto reloaded = DataIO::loadKitti("../../data/semantic3d/cathedral1_kitti.bin");

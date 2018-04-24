@@ -7,6 +7,29 @@
 #include <memory>
 #include <ios>
 
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+
+PointCloud<float> DataIO::loadFile(const std::string& filepath) {
+    auto endsWith = [&] (const std::string ext) {
+        return filepath.rfind(ext) == filepath.length() - ext.length();
+    };
+
+    if (endsWith(".obj")) {
+        return loadObj(filepath);
+    }
+    if (endsWith(".bin")) {
+        // get size of file
+        fs::path p{filepath};
+        p = fs::canonical(p);
+        size_t length = fs::file_size(p);
+        return loadKitti(filepath, length);
+    }
+    if (endsWith(".txt")) {
+        return loadSemantic3D(filepath);
+    }
+}
+
 PointCloud<float> DataIO::loadKitti(const std::string& filepath, size_t num) {
     PointCloud<float> cloud;
 
